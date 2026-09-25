@@ -3846,10 +3846,12 @@
       if (pin.onBench) return; // benched pins live in the substitution bench, not on the field
       if (pin.banned) return; // red-carded — sent off to the Banned area, not on the field
       const pendingMove = pendingMoves[pin.id];
+      const live = liveMovePositions[pin.id];
+      const useLive = live && (Date.now() - live.at) < LIVE_MOVE_FRESHNESS_MS;
       const el = document.createElement('div');
       el.className = 'pin';
-      el.style.left = (pendingMove ? pendingMove.x : pin.x) + '%';
-      el.style.top = (pendingMove ? pendingMove.y : pin.y) + '%';
+      el.style.left = (useLive ? live.x : (pendingMove ? pendingMove.x : pin.x)) + '%';
+      el.style.top = (useLive ? live.y : (pendingMove ? pendingMove.y : pin.y)) + '%';
       el.style.background = kitBackground(pin.color, pin.color2, pin.style);
       el.style.color = reactiveTextColor(pin.color);
       el.dataset.id = pin.id;
@@ -4596,10 +4598,25 @@
     if (window.__broadcastLivePinMove) window.__broadcastLivePinMove(dragState.id, dragState.lastX, dragState.lastY);
   }
 
+  // Tracks the most recent live-move position for pins currently being
+  // dragged by someone else. Without this, a routine re-render triggered by
+  // any unrelated sync event landing mid-drag rebuilds that pin's element
+  // at its last-actually-synced spot (since live-move is ephemeral and
+  // never touches pin.x/pin.y), wiping out the smooth in-progress movement
+  // and making it visibly snap back — then jump forward again on the next
+  // live-move update. That's exactly what shows up as pins "TPing" instead
+  // of moving live. Entries simply age out after LIVE_MOVE_FRESHNESS_MS,
+  // which comfortably covers gaps between the ~15/sec broadcasts during an
+  // active drag while still letting the pin correctly settle at its real,
+  // confirmed position once the drag actually finishes and syncs for real.
+  let liveMovePositions = {};
+  const LIVE_MOVE_FRESHNESS_MS = 500;
+
   window.__onLivePinMove = function(payload){
     if (!payload || typeof payload.pinId !== 'number') return;
     // don't fight with a pin we're currently dragging ourselves
     if (dragState && dragState.id === payload.pinId) return;
+    liveMovePositions[payload.pinId] = { x: payload.x, y: payload.y, at: Date.now() };
     const el = pinLayer.querySelector('[data-id="' + payload.pinId + '"]');
     if (!el) return; // not currently on the field (e.g. benched) — ignore
     el.style.left = payload.x + '%';
