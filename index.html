@@ -1982,11 +1982,17 @@
      --mob-scale from the HUD's natural size vs the actual viewport. Fixed-
      position children (like the FABs) are contained by this transformed
      box too, so they shrink and stay put relative to it instead of the
-     raw viewport. Desktop (no .mobile-hud class) is completely untouched. */
+     raw viewport. Desktop (no .mobile-hud class) is completely untouched.
+     Deliberately NOT position:absolute here: .app is already width:100%
+     height:100vh in normal flow, so a plain scale() with a centered origin
+     shrinks it symmetrically within that full-viewport box for free. Adding
+     position:absolute; left:50% on top of an auto-width element instead
+     triggers CSS's shrink-to-fit width algorithm (which sizes the box from
+     the space between left:50% and the container's edge, not the content's
+     real width) — that mis-centered the board and clipped/wrapped content
+     that didn't actually fit that miscomputed width. */
   body.mobile-hud .app{
-    position:absolute;
-    left:50%; top:50%;
-    transform:translate(-50%,-50%) scale(var(--mob-scale, 1));
+    transform:scale(var(--mob-scale, 1));
     transform-origin:center center;
   }
 
