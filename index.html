@@ -454,6 +454,7 @@
     cursor:pointer;
   }
   .response-stat-btn:hover{ background:var(--blue); border-color:var(--blue); color:#fff; }
+  .response-stat-btn.active{ background:var(--blue); border-color:var(--blue); color:#fff; }
 
   .pin .flow-aura{
     position:absolute;
@@ -1116,6 +1117,62 @@
     .tutorial-sidebar{ flex-direction:row; flex-wrap:wrap; position:static; flex-basis:auto; }
   }
 
+  /* ---- Interactive Tutorial mini-game: a fully self-contained sandbox,
+     visually distinct from the real field/pins so it never gets confused
+     with (or accidentally shares CSS hooks with) the live board. ---- */
+  .tut-wrap{ display:flex; flex-direction:column; gap:12px; height:100%; }
+  .tut-banner h3{ margin:0 0 4px; }
+  .tut-banner p{ margin:0 0 4px; color:var(--muted); }
+  .tut-result{ color:var(--blue-bright) !important; font-weight:700; min-height:18px; }
+  .tut-field-wrap{ display:flex; justify-content:center; }
+  .tut-field{
+    position:relative;
+    width:min(100%, 900px);
+    aspect-ratio: 1240 / 700;
+    border-radius:10px;
+    overflow:hidden;
+    background:
+      repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 4%, rgba(255,255,255,0) 4% 8%),
+      linear-gradient(180deg, #1c5c34, #164a2a);
+    box-shadow:0 0 0 1px var(--line), 0 10px 30px -12px rgba(0,0,0,.7);
+    touch-action:none;
+    user-select:none;
+  }
+  .tut-goal{
+    position:absolute; right:1%; top:35%; width:3%; height:30%;
+    border:3px solid rgba(255,255,255,.85);
+    border-left:none;
+    border-radius:0 4px 4px 0;
+  }
+  .tut-ring{
+    position:absolute;
+    border:2px dashed rgba(255,255,255,.55);
+    border-radius:50%;
+    transform:translate(-50%, -50%);
+    pointer-events:none;
+  }
+  .tut-ball{
+    position:absolute; width:14px; height:14px; margin:-7px 0 0 -7px;
+    border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #fff, #d8d8d8 60%, #999 100%);
+    box-shadow:0 1px 3px rgba(0,0,0,.6);
+    z-index:5;
+  }
+  .tut-pin{
+    position:absolute;
+    width:30px; height:30px; margin:-15px 0 0 -15px;
+    border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:13px; color:#fff;
+    box-shadow:0 2px 6px rgba(0,0,0,.5);
+    z-index:10;
+  }
+  .tut-pin-you{ background:var(--blue); cursor:grab; touch-action:none; }
+  .tut-pin-you.dragging{ cursor:grabbing; filter:brightness(1.12); z-index:20; }
+  .tut-pin-opp{ background:var(--red); }
+  .tut-actions{ display:flex; gap:8px; flex-wrap:wrap; min-height:38px; }
+  .tut-controls{ display:flex; justify-content:space-between; gap:8px; }
+
   .tc-layout{
     display:flex;
     gap:20px;
@@ -1430,6 +1487,23 @@
     border-bottom:1px solid var(--line);
     padding-bottom:6px;
   }
+  .specialty-ref-category{
+    font-size:11px;
+    font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    color:var(--blue);
+    margin-top:8px;
+  }
+  .specialty-ref-category:first-child{ margin-top:0; }
+  .specialty-ref-item{
+    font-size:11.5px;
+    line-height:1.4;
+    color:var(--text);
+    border-bottom:1px solid var(--line);
+    padding-bottom:6px;
+  }
+  .specialty-ref-item b{ color:#fff; }
   .notepad-entry .notepad-time{
     color:var(--muted);
     font-size:10px;
@@ -2300,6 +2374,18 @@
       <input type="checkbox" id="characterSpeedsterCheck">
       <span>Speedster</span>
     </label>
+    <label class="checkbox-row">
+      <input type="checkbox" id="characterWeaponCheck">
+      <span>Weapon</span>
+    </label>
+    <label>Specialty 1</label>
+    <select class="npc-select" id="characterSpecialty1Select">
+      <option value="">&mdash; None &mdash;</option>
+    </select>
+    <label>Specialty 2 <span style="font-weight:400; color:var(--muted);">(Talented Eye caps to 1)</span></label>
+    <select class="npc-select" id="characterSpecialty2Select">
+      <option value="">&mdash; None &mdash;</option>
+    </select>
     <label>Talent 1</label>
     <select class="npc-select" id="characterTalentSelect">
       <option value="">&mdash; None &mdash;</option>
@@ -2411,6 +2497,18 @@
             <input type="checkbox" id="tcSpeedsterCheck">
             <span>Speedster</span>
           </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="tcWeaponCheck">
+            <span>Weapon</span>
+          </label>
+          <label>Specialty 1</label>
+          <select class="npc-select" id="tcSpecialty1Select">
+            <option value="">&mdash; None &mdash;</option>
+          </select>
+          <label>Specialty 2 <span style="font-weight:400; color:var(--muted);">(Talented Eye caps to 1)</span></label>
+          <select class="npc-select" id="tcSpecialty2Select">
+            <option value="">&mdash; None &mdash;</option>
+          </select>
           <label>Talent 1</label>
           <select class="npc-select" id="tcTalentSelect">
             <option value="">&mdash; None &mdash;</option>
@@ -2526,6 +2624,16 @@
   <div class="notepad-body" id="diceRollBody" style="display:none;">
     <p class="presence-empty">No rolls yet.</p>
   </div>
+</div>
+
+<div class="notepad hidden" id="specialtyRefPanel" style="width:320px;">
+  <div class="notepad-header" id="specialtyRefHeader">
+    <span>Specialties</span>
+    <div class="notepad-header-actions">
+      <button class="panel-x" id="closeSpecialtyRefBtn" type="button">&times;</button>
+    </div>
+  </div>
+  <div class="notepad-body" id="specialtyRefBody"></div>
 </div>
 
 <div class="modal-overlay hidden" id="storageDiagModal">
@@ -2658,6 +2766,10 @@
       <input type="checkbox" id="speedsterCheck">
       <span>Speedster</span>
     </label>
+    <label class="checkbox-row">
+      <input type="checkbox" id="weaponCheck">
+      <span>Weapon</span>
+    </label>
 
     <label>Talent 1</label>
     <select class="npc-select" id="talentSelect">
@@ -2678,6 +2790,18 @@
       <option value="Destroyer Eyes">Destroyer Eyes</option>
     </select>
     <p class="stat-hint">Activated from the Talent tab in Play mode (Destroyer Eyes activates from the Flow tab instead). Each talent's charges and activation are independent.</p>
+
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
+      <label style="margin:0;">Specialties</label>
+      <button class="btn" type="button" id="openSpecialtyRefBtn" style="padding:4px 10px; font-size:11px;">Reference</button>
+    </div>
+    <select class="npc-select" id="specialty1Select">
+      <option value="">&mdash; None &mdash;</option>
+    </select>
+    <select class="npc-select" id="specialty2Select">
+      <option value="">&mdash; None &mdash;</option>
+    </select>
+    <p class="stat-hint" id="specialtyCapNote">2 slots \u2014 having a Talented Eye talent caps this to 1.</p>
   </div>
 
   <div class="tab-pane" data-pane="npc" style="display:none;">
@@ -2754,6 +2878,7 @@
   <div class="tab-pane" data-pane="ball" style="display:none;">
     <button class="ball-toggle" id="ballToggleBtn" type="button">Not Carrying</button>
     <button class="delete-btn" id="cancelFreeMoveBtn" type="button" style="display:none;">Cancel Free Move</button>
+    <button class="btn dash-use-btn" id="emergencyStopperBtn" type="button" style="display:none;">Emergency Stopper: Respin</button>
 
     <div class="pane-divider"></div>
     <label>Challenge</label>
@@ -2808,6 +2933,8 @@
 
     <div id="talentSlot1" class="talent-slot" style="display:none;"></div>
     <div id="talentSlot2" class="talent-slot" style="display:none;"></div>
+    <div id="weaponSlot" class="talent-slot" style="display:none;"></div>
+    <div id="specialtyActionSlot" class="talent-slot" style="display:none;"></div>
 
     <div class="pane-divider"></div>
     <label>Flow</label>
@@ -2833,6 +2960,23 @@
 
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
+// ============================================================
+// LOCKED — the entire sync system, confirmed working correctly
+// as of [this session]. This covers: this whole PeerJS script
+// block (connection setup, wireConnection, handleIncomingKV,
+// broadcastToGuests, the window.storage shim, live-move
+// broadcast/receive), and in the main script further down:
+// syncTick, saveState, applyLoadedState, mergePins, mergeShots,
+// onBallPointerUp, saveSetupStateIfChanged, writePresenceHeartbeat,
+// fetchPresence, and renderPins' liveMovePositions handling.
+// DO NOT change anything in any of these as a side effect of an
+// unrelated task, however small it looks. If a future task
+// appears to require touching sync behavior at all, STOP and ask
+// the user to explicitly confirm first — do not just go ahead and
+// make the change, even if the fix seems obviously correct. This
+// area has broken multiple times from well-intentioned edits that
+// seemed safe in isolation; treat any temptation to "just quickly
+// fix" something here as the signal to stop and ask, not proceed.
 // ============================================================
 // PeerJS integration — replaces window.storage (Claude-sandbox-only)
 // with real peer-to-peer connections, using PeerJS's free public
@@ -3088,6 +3232,7 @@
   let activePinId = null;
   let dragState = null;
   let pendingMoves = {}; // { [pinId]: {x, y} } — unconfirmed drags, kept as real state so they survive any re-render
+  let specialtyTargetQueue = []; // pending "pick a pin" prompts from Passing specialties: { amount, label }
   let mode = 'edit'; // 'edit' | 'play'
   let stadiumLook = 'basic'; // 'basic' | 'caged' | 'crowd' — the environment around the pitch
   let hasStartedPlay = false; // only the very first Edit->Play switch should refill actions
@@ -3171,9 +3316,9 @@
     if (fx >= 995 && inBoxY) return { zone: 'box', side: 'right' };
 
     if (fx <= 279) return { zone: 'zone2', side: 'left', required: 10 };
-    if (fx <= 370) return { zone: 'zone3', side: 'left', required: 15 };
+    if (fx <= 370) return { zone: 'zone3', side: 'left', required: pinHasSpecialty(pin, 'long-shot-specialist') ? 10 : 15 };
     if (fx >= 961) return { zone: 'zone2', side: 'right', required: 10 };
-    if (fx >= 870) return { zone: 'zone3', side: 'right', required: 15 };
+    if (fx >= 870) return { zone: 'zone3', side: 'right', required: pinHasSpecialty(pin, 'long-shot-specialist') ? 10 : 15 };
     return { zone: 'none' };
   }
 
@@ -3191,6 +3336,134 @@
     }
     return { available: false, debuff: 0, zone: 'none' };
   }
+
+  // Volley shooting: is the ball currently within this pin's move radius,
+  // even though they aren't carrying it? Reuses the exact same radius math
+  // as the actual drag boundary (pin diameter * radiusMult, halved by the
+  // MTL Attack nat-1 penalty when active) — just computed from the pin's
+  // live rendered element instead of an in-progress drag, since this gets
+  // checked before any drag has started (deciding whether the Shot button
+  // should even be enabled).
+  function isBallWithinMoveRadius(pin){
+    if (!ball.active) return false;
+    const el = pinLayer.querySelector('[data-id="' + pin.id + '"]');
+    if (!el) return false;
+    const pinRect = el.getBoundingClientRect();
+    const fieldRect = field.getBoundingClientRect();
+    if (!fieldRect.width || !fieldRect.height) return false;
+    const pinDiameterPx = pinRect.width;
+    const maxRadiusPx = pinDiameterPx * getEffectiveRadiusMult(pin);
+    const pinPxX = fieldRect.left + (pin.anchorX / 100) * fieldRect.width;
+    const pinPxY = fieldRect.top + (pin.anchorY / 100) * fieldRect.height;
+    const ballPxX = fieldRect.left + (ball.x / 100) * fieldRect.width;
+    const ballPxY = fieldRect.top + (ball.y / 100) * fieldRect.height;
+    const dist = Math.sqrt((ballPxX - pinPxX) ** 2 + (ballPxY - pinPxY) ** 2);
+    return dist <= maxRadiusPx;
+  }
+
+  // ---- Specialties ----
+  // Declared early, before any UI code that references it, to avoid a TDZ
+  // crash at load time (this bit us once before — SPECIALTY_CATEGORIES must
+  // exist before anything tries to build the assignment dropdowns or the
+  // reference window from it).
+  const SPECIALTY_CATEGORIES = [
+    {
+      name: 'Dribbling',
+      specialties: [
+        { id: 'direction-shift', name: 'Direction Shift', desc: 'Your dribble-win radius is 2.5x instead of the usual 2x.' },
+        { id: 'rhythm-dribbler', name: 'Rhythm Dribbler', desc: 'Each consecutive dribble win in a row adds +1 AGL to your next dribble roll, up to +3. A loss resets the streak.' },
+        { id: 'nutmeg-specialist', name: 'Nutmeg Specialist', desc: 'Win a dribble challenge by 5 or more and the defender can\u2019t challenge you again for your next 2 moves.' },
+        { id: 'blind-spot-movement', name: 'Blind Spot Movement', desc: '+2 AGL on dribbles while not carrying the ball. Once every 3 chunks, if no opponent is nearby, your move radius gets a +0.3x boost too.' }
+      ]
+    },
+    {
+      name: 'Shooting',
+      specialties: [
+        { id: 'clinical-finisher', name: 'Clinical Finisher', desc: '+3 ACC on any shot taken from inside the box. No cooldown.' },
+        { id: 'long-shot-specialist', name: 'Long Shot Specialist', desc: 'Zone 3\u2019s MTL (Shots) requirement drops from 15+ to 10+ for you.' },
+        { id: 'volley-expert', name: 'Volley Expert', desc: '+3 ACC on a volley shot (not carrying the ball) taken from the box or Zone 2. 8-chunk cooldown after use.' },
+        { id: 'far-corner-specialist', name: 'Far Corner Specialist', desc: '+3 ACC on a shot from Zone 2. 6-chunk cooldown after use.' }
+      ]
+    },
+    {
+      name: 'Passing',
+      specialties: [
+        { id: 'one-touch-distributor', name: 'One-Touch Distributor', desc: '+3 ACC on a pass while not carrying the ball yourself. No cooldown.' },
+        { id: 'long-ball-specialist', name: 'Long Ball Specialist', desc: '+2 ACC on the pass itself, then pick any pin to get +1 on their next roll. 5-chunk cooldown after use.' },
+        { id: 'nasty-pass', name: 'Nasty Pass', desc: 'After any pass you make, pick any pin to get -2 on their next roll. No cooldown.' },
+        { id: 'playmakers-touch', name: 'Playmaker\u2019s Touch', desc: 'A standalone action \u2014 pick any pin to get +2 on their next roll. 6-chunk cooldown after use.' }
+      ]
+    },
+    {
+      name: 'Defensive',
+      specialties: [
+        { id: 'lockdown-marker', name: 'Lockdown Marker', desc: 'Mark one opponent from the Talent tab. +2 on all your rolls against them specifically, and the same for them against you if they\u2019ve marked you back.' },
+        { id: 'ball-winner', name: 'Ball Winner', desc: '+2 STR on Tackles. Tackle and Block are immune to the natural-1 auto-foul.' },
+        { id: 'shot-blocker', name: 'Shot Blocker', desc: '+3 STR on all Blocks.' },
+        { id: 'emergency-stopper', name: 'Emergency Stopper', desc: 'Once per match, after losing a Block/Tackle/Slide/Interception, you\u2019re offered a respin against the exact same roll that beat you.' }
+      ]
+    },
+    {
+      name: 'Movement',
+      specialties: [
+        { id: 'shadow-runner', name: 'Shadow Runner', desc: '+0.3x movement whenever you don\u2019t currently have a successful Acceleration boost active.' },
+        { id: 'explosive-start', name: 'Explosive Start', desc: 'The first successful Acceleration roll each chunk gets an extra +0.3x on top of the normal boost.' },
+        { id: 'sprint-specialist', name: 'Sprint Specialist', desc: '+0.5x radius on every actual Dash (not Acceleration).' },
+        { id: 'relentless-engine', name: 'Relentless Engine', desc: 'Dash and Super Sprint cooldowns are both reduced by 1 chunk.' }
+      ]
+    }
+  ];
+  const ALL_SPECIALTIES = SPECIALTY_CATEGORIES.flatMap(cat => cat.specialties);
+  function findSpecialty(id){ return ALL_SPECIALTIES.find(s => s.id === id); }
+  function pinHasSpecialty(pin, id){ return pin.specialty1 === id || pin.specialty2 === id; }
+
+  // The fully effective move-radius multiplier for a pin: base radiusMult,
+  // plus Shadow Runner's +0.3x whenever no successful Acceleration boost is
+  // currently active, then halved if the MTL Attack natural-1 penalty is in
+  // effect. Centralized here since this needs to stay consistent across
+  // several places (the live drag-start ring, the actual drag boundary, the
+  // pending-moves ring, and the volley-range check) — computing it inline
+  // at each of those risked them drifting out of sync with each other.
+  // blindSpotBoostActive is decided once, at drag-start, by the caller —
+  // never recomputed here — since Blind Spot Movement's cooldown must be
+  // consumed exactly once per drag, not once per mousemove event.
+  function getEffectiveRadiusMult(pin, blindSpotBoostActive){
+    let mult = pin.radiusMult || 1;
+    if (pinHasSpecialty(pin, 'shadow-runner') && mult === 1) mult += 0.3;
+    if (blindSpotBoostActive) mult += 0.3;
+    if (pin.mtlAttackNat1Penalty) mult *= 0.5;
+    return mult;
+  }
+
+  // Whether any pin of a different kit color is close enough to count as a
+  // nearby opponent — used by Blind Spot Movement's "no opponent nearby" gate.
+  function hasNearbyOpponent(pin){
+    const pinPx = getPinDiameterPx();
+    return pins.some(p => {
+      if (p.id === pin.id || p.onBench || p.banned) return false;
+      if (p.color === pin.color) return false; // same kit color — not an opponent
+      return fieldDistancePx(pin.x, pin.y, p.x, p.y) <= pinPx * 2;
+    });
+  }
+
+  // Talented Eye talents cap a pin to 1 specialty slot instead of 2.
+  const TALENTED_EYE_NAMES = ['Sniper Eyes', 'Assassin Eyes', 'Predator Eyes', 'Meta-Vision', 'Destroyer Eyes'];
+  function hasTalentedEye(pin){
+    return TALENTED_EYE_NAMES.includes(pin.talent) || TALENTED_EYE_NAMES.includes(pin.talent2);
+  }
+
+  // Decrements every specialty cooldown by 1 each chunk. Called from the
+  // same place pin actions/anchors get refreshed for a new chunk.
+  function tickSpecialtyCooldowns(){
+    pins.forEach(p => {
+      if (p.blindSpotCooldownChunks > 0) p.blindSpotCooldownChunks -= 1;
+      if (p.volleyExpertCooldownChunks > 0) p.volleyExpertCooldownChunks -= 1;
+      if (p.farCornerCooldownChunks > 0) p.farCornerCooldownChunks -= 1;
+      if (p.longBallCooldownChunks > 0) p.longBallCooldownChunks -= 1;
+      if (p.playmakerCooldownChunks > 0) p.playmakerCooldownChunks -= 1;
+    });
+  }
+
   let ballDragState = null;
 
   // ---- Shot Menu state ----
@@ -3296,6 +3569,9 @@
       p.radiusMult = 1;
       p.mtlShotsResult = null;
       p.diceResult = null;
+      p.lockdownTargetId = null; // Lockdown Marker — marks don't carry between matches
+      p.emergencyStopperUsed = false; // Emergency Stopper — refills for the new match
+      p.pendingEmergencyStopperOffer = null;
     });
     maxChunkReached = Number(chunkValue.value) || 1; // otherwise a fresh match starting back at a low chunk would never trigger a refill until it climbed past whatever chunk the PREVIOUS match reached
     maxChunkResetAt = Date.now();
@@ -3518,15 +3794,53 @@
     storageDiagRunBtn.textContent = 'Run Test';
   });
 
-  // ---- Character tab: Speedster + Talent (dual select — buffs applied in Play mode) ----
+  // ---- Character tab: Speedster + Weapon + Talent (dual select — buffs applied in Play mode) ----
   const speedsterCheck = document.getElementById('speedsterCheck');
+  const weaponCheck = document.getElementById('weaponCheck');
   const talentSelect = document.getElementById('talentSelect');
   const talentSelect2 = document.getElementById('talentSelect2');
+  const specialty1Select = document.getElementById('specialty1Select');
+  const specialty2Select = document.getElementById('specialty2Select');
+  const specialtyCapNote = document.getElementById('specialtyCapNote');
+
+  // Populate a specialty dropdown, grouped by category, from the fixed list.
+  // Shared by the in-play Character tab, the Character Library editor, and
+  // the Team Creator editor — all three offer the same specialty picks.
+  function populateSpecialtySelect(selectEl){
+    if (!selectEl) return;
+    SPECIALTY_CATEGORIES.forEach(cat => {
+      const group = document.createElement('optgroup');
+      group.label = cat.name;
+      cat.specialties.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id; opt.textContent = s.name;
+        group.appendChild(opt);
+      });
+      selectEl.appendChild(group);
+    });
+  }
+  populateSpecialtySelect(specialty1Select);
+  populateSpecialtySelect(specialty2Select);
+  const characterSpecialty1Select = document.getElementById('characterSpecialty1Select');
+  const characterSpecialty2Select = document.getElementById('characterSpecialty2Select');
+  populateSpecialtySelect(characterSpecialty1Select);
+  populateSpecialtySelect(characterSpecialty2Select);
+  const tcSpecialty1Select = document.getElementById('tcSpecialty1Select');
+  const tcSpecialty2Select = document.getElementById('tcSpecialty2Select');
+  populateSpecialtySelect(tcSpecialty1Select);
+  populateSpecialtySelect(tcSpecialty2Select);
 
   speedsterCheck.addEventListener('change', () => {
     const pin = pins.find(p => p.id === activePinId);
     if (!pin) return;
     pin.speedster = speedsterCheck.checked;
+    markDirty();
+  });
+
+  weaponCheck.addEventListener('change', () => {
+    const pin = pins.find(p => p.id === activePinId);
+    if (!pin) return;
+    pin.weapon = weaponCheck.checked;
     markDirty();
   });
 
@@ -3551,6 +3865,7 @@
     pin.talentUsesLeft = 10;
     resetSharedTalentState(pin);
     markDirty();
+    refreshCharacterTab(pin); // a talent change can change the specialty cap
   });
 
   talentSelect2.addEventListener('change', () => {
@@ -3561,12 +3876,43 @@
     pin.talent2UsesLeft = 10;
     resetSharedTalentState(pin);
     markDirty();
+    refreshCharacterTab(pin);
+  });
+
+  specialty1Select.addEventListener('change', () => {
+    const pin = pins.find(p => p.id === activePinId);
+    if (!pin) return;
+    pin.specialty1 = specialty1Select.value || null;
+    // Having a Talented Eye caps this pin to 1 slot — picking a specialty1
+    // while capped clears specialty2 too, rather than silently keeping a
+    // second one active that the UI won't let them touch anymore.
+    if (pin.specialty1 && hasTalentedEye(pin)) pin.specialty2 = null;
+    markDirty();
+    refreshCharacterTab(pin);
+  });
+
+  specialty2Select.addEventListener('change', () => {
+    const pin = pins.find(p => p.id === activePinId);
+    if (!pin) return;
+    if (hasTalentedEye(pin)) return; // capped to 1 slot — shouldn't happen, select is disabled
+    pin.specialty2 = specialty2Select.value || null;
+    markDirty();
+    refreshCharacterTab(pin);
   });
 
   function refreshCharacterTab(pin){
     speedsterCheck.checked = !!pin.speedster;
+    weaponCheck.checked = !!pin.weapon;
     talentSelect.value = pin.talent || '';
     talentSelect2.value = pin.talent2 || '';
+    specialty1Select.value = pin.specialty1 || '';
+    const capped = hasTalentedEye(pin);
+    specialty2Select.disabled = capped;
+    specialty2Select.value = capped ? '' : (pin.specialty2 || '');
+    if (capped && pin.specialty2) { pin.specialty2 = null; markDirty(); } // talent changed elsewhere and left a stale 2nd slot
+    specialtyCapNote.textContent = capped
+      ? '1 slot \u2014 capped by a Talented Eye talent.'
+      : '2 slots \u2014 having a Talented Eye talent caps this to 1.';
   }
 
   // ---- NPC tab ----
@@ -3649,6 +3995,17 @@
     flowActive: false, flowColor: '#1e8fff', flowActivationCount: 0, flowTurnsLeft: 0,
     flowCooldownChunks: 0, flowLocked: false,
     destroyerActive: false, destroyerUsed: false, destroyerTurnsLeft: 0,
+    weapon: false, weaponStat: 'ACC', weaponBuffStat: null, // Weapon: persistent stat selector, one-time +3 on next roll of that stat when used
+    specialty1: null, specialty2: null,
+    dribbleStreak: 0, // Rhythm Dribbler
+    nutmegMovesRemaining: 0, // Nutmeg Specialist
+    explosiveStartUsedThisChunk: false, // Explosive Start
+    blindSpotCooldownChunks: 0, volleyExpertCooldownChunks: 0, farCornerCooldownChunks: 0,
+    longBallCooldownChunks: 0, playmakerCooldownChunks: 0,
+    pendingRollModifier: 0, // stat-agnostic — applied then cleared by applyTalentBuff on any roll (Long Ball Specialist / Nasty Pass / Playmaker's Touch)
+    lockdownTargetId: null, // Lockdown Marker
+    emergencyStopperUsed: false, // Emergency Stopper — once per match, reset by End Match
+    pendingEmergencyStopperOffer: null, // Emergency Stopper — { targetId, defenseType, targetTotal, cBuff } while the respin offer is live
     mtlAttackNat1Penalty: false, // a natural 1 on MTL (Attack) halves this pin's movement until the chunk ends
     onBench: false, benchSlot: null,
     yellowCards: 0, redCarded: false, banned: false,
@@ -4039,7 +4396,7 @@
       const d = pinEl ? pinEl.getBoundingClientRect().width : getPinDiameterPx();
       const ring = document.createElement('div');
       ring.className = 'move-ring' + (pin.actions <= 0 ? ' spent' : '');
-      const ringRadiusMult2 = (pin.radiusMult || 1) * (pin.mtlAttackNat1Penalty ? 0.5 : 1);
+      const ringRadiusMult2 = getEffectiveRadiusMult(pin);
       ring.style.width = (d * 2 * ringRadiusMult2) + 'px';
       ring.style.height = (d * 2 * ringRadiusMult2) + 'px';
       ring.style.left = pin.anchorX + '%';
@@ -4076,6 +4433,8 @@
     ballDragState.lastY = y;
   }
 
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   function onBallPointerUp(e){
     if (!ballDragState || e.pointerId !== ballDragState.pointerId) return;
     let moved = false;
@@ -4491,14 +4850,25 @@
       pointerId: e.pointerId,
       el,
       pinDiameterPx: el.getBoundingClientRect().width,
-      ringEl: null
+      ringEl: null,
+      blindSpotBoostActive: false
     };
+
+    // Blind Spot Movement — decided once, right here at drag start, so the
+    // cooldown is consumed exactly once per drag rather than once per
+    // mousemove event during it.
+    if (pinHasSpecialty(pin, 'blind-spot-movement') && !pin.ballCarrier &&
+        (pin.blindSpotCooldownChunks || 0) <= 0 && !hasNearbyOpponent(pin)) {
+      dragState.blindSpotBoostActive = true;
+      pin.blindSpotCooldownChunks = 3;
+      markDirty();
+    }
 
     if (mode === 'play' && !pin.freeMoveUnlocked) {
       const ring = document.createElement('div');
       ring.className = 'move-ring' + (pin.actions <= 0 ? ' spent' : '');
       const d = dragState.pinDiameterPx;
-      const ringRadiusMult = (pin.radiusMult || 1) * (pin.mtlAttackNat1Penalty ? 0.5 : 1);
+      const ringRadiusMult = getEffectiveRadiusMult(pin, dragState.blindSpotBoostActive);
       ring.style.width = (d * 2 * ringRadiusMult) + 'px';
       ring.style.height = (d * 2 * ringRadiusMult) + 'px';
       ring.style.left = pin.anchorX + '%';
@@ -4543,7 +4913,7 @@
         if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
         else dx = 0;
       }
-      const maxRadiusPx = dragState.pinDiameterPx * (pin.radiusMult || 1) * (pin.mtlAttackNat1Penalty ? 0.5 : 1);
+      const maxRadiusPx = dragState.pinDiameterPx * getEffectiveRadiusMult(pin, dragState.blindSpotBoostActive);
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > maxRadiusPx && dist > 0) {
         const scale = maxRadiusPx / dist;
@@ -4584,6 +4954,8 @@
   }
 
   let lastPinBroadcastAt = 0;
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   function onPinPointerMove(e){
     onPinPointerMoveCore(e);
     if (!dragState) return;
@@ -4649,7 +5021,15 @@
       } else if (dragState.ringEl) {
         dragState.ringEl.remove();
       }
-      // not moved: leave pin exactly where it was, nothing to confirm
+      // not moved: a tap. If a Passing specialty is waiting for a target
+      // pick (Long Ball Specialist / Nasty Pass / Playmaker's Touch),
+      // this tap resolves it instead of doing nothing.
+      if (specialtyTargetQueue.length) {
+        resolveSpecialtyTargetPick(pin);
+        dragState = null;
+        return;
+      }
+      // not moved, nothing pending: leave pin exactly where it was, nothing to confirm
       dragState = null;
       return;
     }
@@ -4681,6 +5061,7 @@
     refreshD20Locks(pin);
     refreshDribblePast(pin);
     cancelFreeMoveBtn.style.display = pin.freeMoveUnlocked ? 'block' : 'none';
+    emergencyStopperBtn.style.display = pin.pendingEmergencyStopperOffer ? 'block' : 'none';
     refreshDashDisplay(pin);
     refreshTalentTab(pin);
     refreshFlowTab(pin);
@@ -4754,6 +5135,7 @@
       pin.destroyerTurnsLeft -= 1;
       if (pin.destroyerTurnsLeft <= 0) pin.destroyerActive = false;
     }
+    if (pin.nutmegMovesRemaining > 0) pin.nutmegMovesRemaining -= 1; // Nutmeg Specialist — counts down with each actual move
 
     if (pin.ballCarrier && ball.active) {
       ball.x = Math.max(1, Math.min(99, pin.x + ball.offsetX));
@@ -4883,6 +5265,13 @@
     renderPins();
   });
 
+  const emergencyStopperBtn = document.getElementById('emergencyStopperBtn');
+  emergencyStopperBtn.addEventListener('click', () => {
+    const pin = pins.find(p => p.id === activePinId);
+    if (!pin) return;
+    useEmergencyStopper(pin);
+  });
+
   // ---- Dash: 2 free uses, then a 5-chunk cooldown ----
   const dashPips = document.getElementById('dashPips');
   const dashStatusText = document.getElementById('dashStatusText');
@@ -4997,8 +5386,11 @@
     if (!pin || pin.dashCharges <= 0) return;
     pin.dashCharges -= 1;
     pin.radiusMult = (pinHasTalent(pin, 'Destroyer Eyes') && pin.destroyerActive) ? 3 : 2.5; // Dash: bigger than Acceleration's boost, free, no action spent
+    if (pinHasSpecialty(pin, 'sprint-specialist')) pin.radiusMult += 0.5; // every actual Dash, not Acceleration
     pin.forwardOnlyMove = false;
-    if (pin.dashCharges === 0) pin.dashCooldownChunks = 5;
+    if (pin.dashCharges === 0) {
+      pin.dashCooldownChunks = pinHasSpecialty(pin, 'relentless-engine') ? Math.max(1, 5 - 1) : 5;
+    }
     refreshDashDisplay(pin);
     renderPins();
     spawnDashEffect(pin);
@@ -5012,8 +5404,12 @@
     pin.dashCharges -= 1; // Super Sprint spends a Dash charge too
     pin.radiusMult = 3;
     pin.forwardOnlyMove = true; // straight line only — no diagonal
-    if (pin.dashCharges === 0) pin.dashCooldownChunks = 5;
-    if (pin.superSprintCharges === 0) pin.superSprintCooldownChunks = 6; // +1 chunk vs a normal Dash
+    if (pin.dashCharges === 0) {
+      pin.dashCooldownChunks = pinHasSpecialty(pin, 'relentless-engine') ? Math.max(1, 5 - 1) : 5;
+    }
+    if (pin.superSprintCharges === 0) {
+      pin.superSprintCooldownChunks = pinHasSpecialty(pin, 'relentless-engine') ? Math.max(1, 6 - 1) : 6; // +1 chunk vs a normal Dash
+    }
     refreshDashDisplay(pin);
     renderPins();
     spawnSuperSprintEffect(pin);
@@ -5090,6 +5486,16 @@
       bonus += 20;
     }
 
+    if (pin.weapon && pin.weaponBuffStat === statKey) {
+      bonus += 3;
+      pin.weaponBuffStat = null; // consumed — one-time use per activation
+    }
+
+    if (pin.pendingRollModifier) {
+      bonus += pin.pendingRollModifier;
+      pin.pendingRollModifier = 0; // consumed — applies to whichever stat is rolled next, then clears
+    }
+
     return bonus;
   }
 
@@ -5109,6 +5515,8 @@
   const talentNoneMsg = document.getElementById('talentNoneMsg');
   const talentSlot1El = document.getElementById('talentSlot1');
   const talentSlot2El = document.getElementById('talentSlot2');
+  const weaponSlotEl = document.getElementById('weaponSlot');
+  const specialtyActionSlotEl = document.getElementById('specialtyActionSlot');
 
   const TALENT_EFFECT_NOTES = {
     'Sniper Eyes': '+10 ACC, +10 MTL while active. 10 shared uses per match, drained by each buffed roll.',
@@ -5269,11 +5677,146 @@
     return wrap;
   }
 
+  const WEAPON_STATS = ['ACC', 'AGL', 'STR', 'SPD', 'MTL'];
+
+  // Weapon: a persistent stat selector, same behavior as the kit color
+  // swatches — click one and it stays selected until changed, no need to
+  // re-pick it every time. "Use Weapon" queues a one-time +3 on the next
+  // roll of whichever stat is currently selected, consumed automatically
+  // by applyTalentBuff the moment that roll happens.
+  function buildWeaponSlotContent(pin){
+    if (!pin.weapon) return null;
+
+    const wrap = document.createElement('div');
+    const nameEl = document.createElement('p');
+    nameEl.className = 'talent-slot-name';
+    nameEl.textContent = 'Weapon';
+    wrap.appendChild(nameEl);
+
+    const statRow = document.createElement('div');
+    statRow.style.display = 'flex';
+    statRow.style.gap = '6px';
+    statRow.style.marginTop = '4px';
+    statRow.style.marginBottom = '8px';
+    WEAPON_STATS.forEach(stat => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'response-stat-btn' + (pin.weaponStat === stat ? ' active' : '');
+      btn.textContent = stat;
+      btn.addEventListener('click', () => {
+        pin.weaponStat = stat;
+        markDirty();
+        refreshTalentTab(pin);
+      });
+      statRow.appendChild(btn);
+    });
+    wrap.appendChild(statRow);
+
+    const useBtn = document.createElement('button');
+    useBtn.className = 'btn dash-use-btn';
+    useBtn.type = 'button';
+    const pending = pin.weaponBuffStat === pin.weaponStat;
+    useBtn.disabled = pending;
+    useBtn.textContent = pending ? 'Queued \u2014 next ' + pin.weaponStat + ' roll' : 'Use Weapon (+3 ' + pin.weaponStat + ')';
+    useBtn.addEventListener('click', () => {
+      if (pin.weaponBuffStat === pin.weaponStat) return;
+      pin.weaponBuffStat = pin.weaponStat;
+      markDirty();
+      refreshTalentTab(pin);
+    });
+    wrap.appendChild(useBtn);
+
+    const note = document.createElement('p');
+    note.className = 'stat-hint';
+    note.textContent = '+3 to the selected stat, one-time, on the next roll of it.';
+    wrap.appendChild(note);
+
+    return wrap;
+  }
+
+  // Standalone specialty actions that aren't tied to a stat roll (currently
+  // just Playmaker's Touch). More can be appended here as Defensive/Movement
+  // specialties with their own buttons get built.
+  function buildSpecialtyActionSlotContent(pin){
+    const hasPlaymaker = pinHasSpecialty(pin, 'playmakers-touch');
+    const hasLockdown = pinHasSpecialty(pin, 'lockdown-marker');
+    if (!hasPlaymaker && !hasLockdown) return null;
+
+    const wrap = document.createElement('div');
+
+    if (hasPlaymaker) {
+      const nameEl = document.createElement('p');
+      nameEl.className = 'talent-slot-name';
+      nameEl.textContent = 'Playmaker’s Touch';
+      wrap.appendChild(nameEl);
+
+      const onCooldown = (pin.playmakerCooldownChunks || 0) > 0;
+      const useBtn = document.createElement('button');
+      useBtn.className = 'btn dash-use-btn';
+      useBtn.type = 'button';
+      useBtn.disabled = onCooldown;
+      useBtn.textContent = onCooldown ? 'Cooldown — ' + pin.playmakerCooldownChunks + ' chunk(s)' : 'Use (pick a pin, +2 next roll)';
+      useBtn.addEventListener('click', () => usePlaymakersTouch(pin));
+      wrap.appendChild(useBtn);
+
+      const note = document.createElement('p');
+      note.className = 'stat-hint';
+      note.textContent = 'Tap any pin right after using this to give them +2 on their next roll. 6-chunk cooldown.';
+      wrap.appendChild(note);
+    }
+
+    if (hasLockdown) {
+      if (hasPlaymaker) wrap.appendChild(document.createElement('div')).className = 'pane-divider';
+
+      const nameEl = document.createElement('p');
+      nameEl.className = 'talent-slot-name';
+      nameEl.textContent = 'Lockdown Marker';
+      wrap.appendChild(nameEl);
+
+      const markedPin = pin.lockdownTargetId ? pins.find(p => p.id === pin.lockdownTargetId) : null;
+      const statusEl = document.createElement('p');
+      statusEl.className = 'stat-hint';
+      statusEl.textContent = markedPin ? ('Marked: ' + pinLabel(markedPin)) : 'No mark set.';
+      wrap.appendChild(statusEl);
+
+      const markBtn = document.createElement('button');
+      markBtn.className = 'btn dash-use-btn';
+      markBtn.type = 'button';
+      markBtn.textContent = markedPin ? 'Re-mark (pick a pin)' : 'Mark Target (pick a pin)';
+      markBtn.addEventListener('click', () => {
+        queueSpecialtyTargetPick(0, 'Lockdown Marker', { type: 'mark', sourcePinId: pin.id });
+      });
+      wrap.appendChild(markBtn);
+
+      if (markedPin) {
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'btn dash-use-btn';
+        clearBtn.type = 'button';
+        clearBtn.textContent = 'Clear Mark';
+        clearBtn.addEventListener('click', () => {
+          pin.lockdownTargetId = null;
+          markDirty();
+          refreshTalentTab(pin);
+        });
+        wrap.appendChild(clearBtn);
+      }
+
+      const note = document.createElement('p');
+      note.className = 'stat-hint';
+      note.textContent = '+2 on your rolls against whoever you’ve marked — and the same for them against you if they’ve marked you back.';
+      wrap.appendChild(note);
+    }
+
+    return wrap;
+  }
+
   function refreshTalentTab(pin){
     const slot1Content = buildTalentSlotContent(pin, 'talent');
     const slot2Content = buildTalentSlotContent(pin, 'talent2');
+    const weaponContent = buildWeaponSlotContent(pin);
+    const specialtyActionContent = buildSpecialtyActionSlotContent(pin);
 
-    talentNoneMsg.style.display = (!slot1Content && !slot2Content) ? 'block' : 'none';
+    talentNoneMsg.style.display = (!slot1Content && !slot2Content && !weaponContent && !specialtyActionContent) ? 'block' : 'none';
 
     talentSlot1El.innerHTML = '';
     if (slot1Content) { talentSlot1El.appendChild(slot1Content); talentSlot1El.style.display = 'block'; }
@@ -5282,6 +5825,14 @@
     talentSlot2El.innerHTML = '';
     if (slot2Content) { talentSlot2El.appendChild(slot2Content); talentSlot2El.style.display = 'block'; }
     else talentSlot2El.style.display = 'none';
+
+    weaponSlotEl.innerHTML = '';
+    if (weaponContent) { weaponSlotEl.appendChild(weaponContent); weaponSlotEl.style.display = 'block'; }
+    else weaponSlotEl.style.display = 'none';
+
+    specialtyActionSlotEl.innerHTML = '';
+    if (specialtyActionContent) { specialtyActionSlotEl.appendChild(specialtyActionContent); specialtyActionSlotEl.style.display = 'block'; }
+    else specialtyActionSlotEl.style.display = 'none';
   }
 
   // ---- Flow tab (phased duration + cooldown, plus Destroyer Eyes) ----
@@ -5545,24 +6096,80 @@
       ? (zone.zone === 'box' ? 'Not needed \u2014 you\u2019re in the box' : 'Only used in Zone 2 / Zone 3')
       : `No buffs \u2014 need D${zone.required}+ in this zone`;
 
-    // ACC (Shooting): needs the ball, and either the box or a passed/failed MTL(Shots) roll for this zone
+    // ACC (Shooting): needs the ball (carried, or within reach for a volley),
+    // and either the box or a passed/failed MTL(Shots) roll for this zone
     const access = getShootingAccess(pin);
-    const canShoot = pin.ballCarrier && access.available;
+    const canVolley = !pin.ballCarrier && isBallWithinMoveRadius(pin);
+    const canShoot = (pin.ballCarrier || canVolley) && access.available;
     d20Buttons.acc_shoot.disabled = !canShoot;
     d20Buttons.acc_shoot.classList.toggle('locked', !canShoot);
-    if (!pin.ballCarrier) {
-      d20Notes.acc_shoot.textContent = 'Need the ball to shoot';
+    if (!pin.ballCarrier && !canVolley) {
+      d20Notes.acc_shoot.textContent = 'Need the ball, or the ball in reach, to shoot';
     } else if (access.zone === 'none') {
       d20Notes.acc_shoot.textContent = 'Out of shooting range';
     } else if (!access.available) {
       d20Notes.acc_shoot.textContent = `Roll MTL (Shots) first (D${access.required}+)`;
     } else if (access.debuff < 0) {
-      d20Notes.acc_shoot.textContent = `Unlocked \u2014 carrying a ${access.debuff} debuff`;
+      d20Notes.acc_shoot.textContent = (canVolley ? 'Volley \u2014 ' : '') + `carrying a ${access.debuff} debuff`;
     } else {
-      d20Notes.acc_shoot.textContent = access.zone === 'box' ? 'Unlocked \u2014 in the box' : 'Unlocked \u2014 no debuff';
+      d20Notes.acc_shoot.textContent = (canVolley ? 'Volley unlocked' : (access.zone === 'box' ? 'Unlocked \u2014 in the box' : 'Unlocked \u2014 no debuff'));
     }
 
     cancelFreeMoveBtn.style.display = pin.freeMoveUnlocked ? 'block' : 'none';
+    emergencyStopperBtn.style.display = pin.pendingEmergencyStopperOffer ? 'block' : 'none';
+  }
+
+  // ---- Specialty targeting (Long Ball Specialist / Nasty Pass / Playmaker's
+  // Touch / Lockdown Marker) ----
+  // These queue a one-time pick — either a +/- modifier onto whichever pin the
+  // player next taps, or (for Lockdown Marker) a mark from a source pin onto
+  // whichever pin gets tapped. Resolved by a tap that doesn't drag the pin, in
+  // Play mode. Queued as a list so more than one pick from the same action
+  // resolves one tap at a time.
+  function queueSpecialtyTargetPick(amount, label, opts){
+    const type = (opts && opts.type) || 'rollmod';
+    const sourcePinId = opts && opts.sourcePinId;
+    specialtyTargetQueue.push({ amount, label, type, sourcePinId });
+    if (specialtyTargetQueue.length === 1) announceSpecialtyTargetPick();
+  }
+
+  function announceSpecialtyTargetPick(){
+    if (!specialtyTargetQueue.length) return;
+    const next = specialtyTargetQueue[0];
+    if (next.type === 'mark') {
+      showToast('Tap a pin to mark them (' + next.label + ').');
+    } else {
+      showToast('Tap a pin to give them ' + (next.amount > 0 ? '+' : '') + next.amount + ' on their next roll (' + next.label + ').');
+    }
+  }
+
+  function resolveSpecialtyTargetPick(targetPin){
+    if (!specialtyTargetQueue.length || !targetPin) return false;
+    const pick = specialtyTargetQueue.shift();
+    if (pick.type === 'mark') {
+      const source = pins.find(p => p.id === pick.sourcePinId);
+      if (source) {
+        source.lockdownTargetId = targetPin.id;
+        showToast(pinLabel(source) + ' marks ' + pinLabel(targetPin) + ' (' + pick.label + ').', 'win');
+        if (activePinId === source.id) refreshTalentTab(source);
+      }
+    } else {
+      targetPin.pendingRollModifier = (targetPin.pendingRollModifier || 0) + pick.amount;
+      showToast(pinLabel(targetPin) + ' will get ' + (pick.amount > 0 ? '+' : '') + pick.amount + ' on their next roll (' + pick.label + ').', pick.amount > 0 ? 'win' : 'error');
+    }
+    markDirty();
+    renderPins();
+    announceSpecialtyTargetPick();
+    return true;
+  }
+
+  function usePlaymakersTouch(pin){
+    if ((pin.playmakerCooldownChunks || 0) > 0) return;
+    pin.playmakerCooldownChunks = 6;
+    logEvent(pinLabel(pin) + ' uses Playmaker’s Touch.');
+    queueSpecialtyTargetPick(2, 'Playmaker’s Touch');
+    markDirty();
+    refreshTalentTab(pin);
   }
 
   function rollD20(pin, rollId){
@@ -5583,12 +6190,29 @@
 
     if (rollId === 'acc_shoot') {
       const access = getShootingAccess(pin);
-      if (!pin.ballCarrier || !access.available) return; // shouldn't happen, button is disabled
-      const buff = getPinStat(pin, 'ACC') + applyTalentBuff(pin, 'ACC');
+      const isVolley = !pin.ballCarrier;
+      if ((!pin.ballCarrier && !isBallWithinMoveRadius(pin)) || !access.available) return; // shouldn't happen, button is disabled
+      let specialtyBonus = 0;
+      const specialtyNotes = [];
+      if (pinHasSpecialty(pin, 'clinical-finisher') && access.zone === 'box') {
+        specialtyBonus += 3;
+        specialtyNotes.push('Clinical Finisher');
+      }
+      if (isVolley && pinHasSpecialty(pin, 'volley-expert') && (access.zone === 'box' || access.zone === 'zone2') && (pin.volleyExpertCooldownChunks || 0) <= 0) {
+        specialtyBonus += 3;
+        pin.volleyExpertCooldownChunks = 8;
+        specialtyNotes.push('Volley Expert');
+      }
+      if (pinHasSpecialty(pin, 'far-corner-specialist') && access.zone === 'zone2' && (pin.farCornerCooldownChunks || 0) <= 0) {
+        specialtyBonus += 3;
+        pin.farCornerCooldownChunks = 6;
+        specialtyNotes.push('Far Corner Specialist');
+      }
+      const buff = getPinStat(pin, 'ACC') + applyTalentBuff(pin, 'ACC') + specialtyBonus;
       const total = roll + buff + access.debuff;
-      pin.diceResult = { label: 'ACC (Shot)', roll, buff: buff + access.debuff, total, boosted: access.debuff === 0 };
+      pin.diceResult = { label: isVolley ? 'ACC (Volley)' : 'ACC (Shot)', roll, buff: buff + access.debuff, total, boosted: access.debuff === 0 };
       pin.mtlShotsResult = null; // consumed — next shot attempt needs a fresh MTL(Shots) roll if still in Zone 2/3
-      logEvent(pinLabel(pin) + ' shot on goal: ' + total + ' (roll ' + roll + ')');
+      logEvent(pinLabel(pin) + (isVolley ? ' volleys on goal: ' : ' shot on goal: ') + total + ' (roll ' + roll + ')' + (specialtyNotes.length ? ' [' + specialtyNotes.join(', ') + ']' : ''));
       logDiceRoll(pin, roll, buff + access.debuff);
       renderPins();
       return;
@@ -5610,7 +6234,22 @@
     // everything else (AGL, STR, SPD, ACC Passing, MTL Defense): plain buffed roll
     const BUFF_STAT = { agl: 'AGL', str: 'STR', spd: 'SPD', acc_pass: 'ACC', mtl_defense: 'MTL' };
     const LABELS = { agl: 'AGL', str: 'STR', spd: 'SPD (Acceleration)', acc_pass: 'ACC (Passing)', mtl_defense: 'MTL (Defense)' };
-    const buff = getPinStat(pin, BUFF_STAT[rollId]) + applyTalentBuff(pin, BUFF_STAT[rollId]);
+
+    let specialtyBonus = 0;
+    const specialtyNotes = [];
+    if (rollId === 'acc_pass') {
+      if (pinHasSpecialty(pin, 'one-touch-distributor') && !pin.ballCarrier) {
+        specialtyBonus += 3;
+        specialtyNotes.push('One-Touch Distributor');
+      }
+      if (pinHasSpecialty(pin, 'long-ball-specialist') && (pin.longBallCooldownChunks || 0) <= 0) {
+        specialtyBonus += 2;
+        pin.longBallCooldownChunks = 5;
+        specialtyNotes.push('Long Ball Specialist');
+      }
+    }
+
+    const buff = getPinStat(pin, BUFF_STAT[rollId]) + applyTalentBuff(pin, BUFF_STAT[rollId]) + specialtyBonus;
     const total = roll + buff;
     let boosted = false;
 
@@ -5629,13 +6268,23 @@
         if (pin.dashCharges < 2) {
           pin.dashCharges = Math.min(2, pin.dashCharges + 1);
           pin.radiusMult = 2;
+          if (pinHasSpecialty(pin, 'explosive-start') && !pin.explosiveStartUsedThisChunk) {
+            pin.radiusMult += 0.3;
+            pin.explosiveStartUsedThisChunk = true;
+          }
         } else {
           pin.radiusMult = (pinHasTalent(pin, 'Destroyer Eyes') && pin.destroyerActive) ? 3 : 2.5;
+          if (pinHasSpecialty(pin, 'sprint-specialist')) pin.radiusMult += 0.5;
         }
         boosted = true;
       } else if (total >= 11) {
         pin.radiusMult = 2;
         boosted = true;
+        // Explosive Start — the first successful Acceleration roll each chunk gets an extra 0.3x
+        if (pinHasSpecialty(pin, 'explosive-start') && !pin.explosiveStartUsedThisChunk) {
+          pin.radiusMult += 0.3;
+          pin.explosiveStartUsedThisChunk = true;
+        }
       } else {
         pin.radiusMult = 1;
       }
@@ -5643,9 +6292,20 @@
     }
 
     pin.diceResult = { label: LABELS[rollId], roll, buff, total, boosted };
-    logEvent(pinLabel(pin) + ' rolled ' + LABELS[rollId] + ': ' + total + ' (roll ' + roll + ')');
+    logEvent(pinLabel(pin) + ' rolled ' + LABELS[rollId] + ': ' + total + ' (roll ' + roll + ')' + (specialtyNotes.length ? ' [' + specialtyNotes.join(', ') + ']' : ''));
     logDiceRoll(pin, roll, buff);
     renderPins();
+
+    if (rollId === 'acc_pass') {
+      // Nasty Pass fires on every pass; Long Ball Specialist's target pick only
+      // fires when its own bonus above actually triggered (i.e. off cooldown).
+      if (specialtyNotes.includes('Long Ball Specialist')) {
+        queueSpecialtyTargetPick(1, 'Long Ball Specialist');
+      }
+      if (pinHasSpecialty(pin, 'nasty-pass')) {
+        queueSpecialtyTargetPick(-2, 'Nasty Pass');
+      }
+    }
   }
 
   // ---- Radial quick-select (right-click a pin in Play mode) ----
@@ -5741,6 +6401,7 @@
     refreshD20Locks(pin);
     refreshDribblePast(pin);
     cancelFreeMoveBtn.style.display = pin.freeMoveUnlocked ? 'block' : 'none';
+    emergencyStopperBtn.style.display = pin.pendingEmergencyStopperOffer ? 'block' : 'none';
     refreshDashDisplay(pin);
     refreshTalentTab(pin);
     refreshFlowTab(pin);
@@ -5903,6 +6564,13 @@
 
     if (challenger.actions <= 0) {
       showToast('No actions left to challenge with.', 'error');
+      return;
+    }
+
+    // Nutmeg Specialist — the target just nutmeg'd someone and can't be
+    // defensively challenged again for their next 2 moves
+    if (defenseType !== 'dribble' && (target.nutmegMovesRemaining || 0) > 0) {
+      showToast((target.name || 'They') + ' just got nutmegged past \u2014 can\u2019t be challenged yet.', 'error');
       return;
     }
 
@@ -6318,6 +6986,58 @@
     renderPins();
   }
 
+  // Shared win resolution for a non-dribble challenge (block/slide/tackle/intercept),
+  // used both by the normal roll-off and by an Emergency Stopper respin.
+  function applyChallengeWinOutcome(challenger, target, defenseType, cTotal, tTotal, label){
+    if (defenseType === 'block' || defenseType === 'slide') {
+      // knocked loose — neither pin ends up with it
+      challenger.ballCarrier = false;
+      target.ballCarrier = false;
+      showToast(label + ' won — ball knocked loose (' + cTotal + ' vs ' + tTotal + ')', 'win');
+    } else {
+      // tackle / interception — clean winner-takes-ball
+      pins.forEach(p => { p.ballCarrier = false; });
+      challenger.ballCarrier = true;
+      if (ball.active) {
+        ball.x = challenger.x;
+        ball.y = challenger.y;
+        ball.offsetX = 0;
+        ball.offsetY = 0;
+      }
+      showToast(label + ' won — ball taken (' + cTotal + ' vs ' + tTotal + ')', 'win');
+    }
+  }
+
+  // Emergency Stopper — once per match, a pin that just lost a Block/Tackle/
+  // Slide/Interception can respin the exact same roll-off: only their d20
+  // is rerolled (same buffs), still measured against the target's original total.
+  function useEmergencyStopper(pin){
+    const offer = pin.pendingEmergencyStopperOffer;
+    if (!offer) return;
+    const target = pins.find(p => p.id === offer.targetId);
+    pin.pendingEmergencyStopperOffer = null;
+    pin.emergencyStopperUsed = true;
+    markDirty();
+    if (!target) { renderPins(); return; }
+
+    const cRoll = Math.floor(Math.random() * 20) + 1;
+    const cTotal = cRoll + offer.cBuff;
+    const label = CHALLENGE_LABELS[offer.defenseType];
+    const won = cTotal > offer.targetTotal;
+    pin.diceResult = { label: label + ' (Emergency Stopper)', roll: cRoll, buff: offer.cBuff, total: cTotal, boosted: won };
+    logDiceRoll(pin, cRoll, offer.cBuff);
+
+    if (won) {
+      applyChallengeWinOutcome(pin, target, offer.defenseType, cTotal, offer.targetTotal, label);
+    } else {
+      showToast('Emergency Stopper respin — still no good (' + cTotal + ' vs ' + offer.targetTotal + ')', 'error');
+    }
+
+    if (activePinId === pin.id) refreshPlayMenuIfOpen(pin);
+    if (activePinId === target.id) refreshPlayMenuIfOpen(target);
+    renderPins();
+  }
+
   function resolveChallengeWithStat(targetStatKey){
     if (!pendingChallengeResponse) return;
     const { challengerId, targetId, defenseType } = pendingChallengeResponse;
@@ -6336,8 +7056,11 @@
     const challengerStatKey = (defenseType === 'intercept' || defenseType === 'dribble') ? 'AGL' : 'STR';
     const cRoll = Math.floor(Math.random() * 20) + 1;
 
+    // Ball Winner — Tackle and Block no longer trigger the natural-1 auto-foul for this pin
+    const foulImmune = pinHasSpecialty(challenger, 'ball-winner') && (defenseType === 'block' || defenseType === 'tackle');
+
     // Natural 1 on a physical challenge = mistimed foul, overriding the normal contest entirely
-    if (cRoll === 1 && (defenseType === 'block' || defenseType === 'tackle' || defenseType === 'slide')) {
+    if (cRoll === 1 && (defenseType === 'block' || defenseType === 'tackle' || defenseType === 'slide') && !foulImmune) {
       handleFoul(challenger, target, defenseType);
       return;
     }
@@ -6345,8 +7068,33 @@
     const tRoll = Math.floor(Math.random() * 20) + 1;
     const cOpponentDebuff = getOpponentTalentDebuff(challenger, target); // from target's active talents
     const tOpponentDebuff = getOpponentTalentDebuff(target, challenger); // from challenger's active talents
-    const cBuff = getPinStat(challenger, challengerStatKey) + applyTalentBuff(challenger, challengerStatKey) + cOpponentDebuff;
-    const tBuff = getPinStat(target, targetStatKey) + applyTalentBuff(target, targetStatKey) + tOpponentDebuff;
+    let cBuff = getPinStat(challenger, challengerStatKey) + applyTalentBuff(challenger, challengerStatKey) + cOpponentDebuff;
+    if (defenseType === 'dribble') {
+      // Rhythm Dribbler — each consecutive win in a row adds +1 AGL, capped at +3
+      if (pinHasSpecialty(challenger, 'rhythm-dribbler')) {
+        cBuff += Math.min(challenger.dribbleStreak || 0, 3);
+      }
+      // Blind Spot Movement — +2 AGL on dribbles specifically while not carrying the ball
+      if (pinHasSpecialty(challenger, 'blind-spot-movement') && !challenger.ballCarrier) {
+        cBuff += 2;
+      }
+    }
+    // Ball Winner — +2 STR on Tackles specifically
+    if (defenseType === 'tackle' && pinHasSpecialty(challenger, 'ball-winner')) {
+      cBuff += 2;
+    }
+    // Shot Blocker — +3 STR on all Blocks
+    if (defenseType === 'block' && pinHasSpecialty(challenger, 'shot-blocker')) {
+      cBuff += 3;
+    }
+    let tBuff = getPinStat(target, targetStatKey) + applyTalentBuff(target, targetStatKey) + tOpponentDebuff;
+    // Lockdown Marker — +2 to your rolls against whoever you've marked, both ways
+    if (pinHasSpecialty(challenger, 'lockdown-marker') && challenger.lockdownTargetId === target.id) {
+      cBuff += 2;
+    }
+    if (pinHasSpecialty(target, 'lockdown-marker') && target.lockdownTargetId === challenger.id) {
+      tBuff += 2;
+    }
     const cTotal = cRoll + cBuff;
     const tTotal = tRoll + tBuff;
     const challengerWins = cTotal > tTotal; // ties favor the target — challenger must beat, not just match
@@ -6359,38 +7107,34 @@
 
     if (!challengerWins) {
       if (defenseType === 'dribble') {
-        showToast(label + ' stopped \u2014 ' + (target.name || 'defender') + ' decides what happens to the ball\u2026', 'error');
+        challenger.dribbleStreak = 0; // Rhythm Dribbler — a loss breaks the streak
+        showToast(label + ' stopped — ' + (target.name || 'defender') + ' decides what happens to the ball…', 'error');
         pendingDribbleOutcome = { defenderId: target.id, dribblerId: challenger.id };
         renderPins();
         return;
       }
-      showToast(label + ' failed \u2014 ' + (target.name || 'target') + '\u2019s ' + targetStatKey + ' response wins (' + cTotal + ' vs ' + tTotal + ')', 'error');
+      showToast(label + ' failed — ' + (target.name || 'target') + '’s ' + targetStatKey + ' response wins (' + cTotal + ' vs ' + tTotal + ')', 'error');
+      // Emergency Stopper — offer the challenger a once-per-match respin of this exact roll-off
+      if (pinHasSpecialty(challenger, 'emergency-stopper') && !challenger.emergencyStopperUsed) {
+        challenger.pendingEmergencyStopperOffer = { targetId: target.id, defenseType, targetTotal: tTotal, cBuff };
+        showToast(pinLabel(challenger) + ' can use Emergency Stopper to respin this.', 'win');
+      }
       if (activePinId === challenger.id) refreshPlayMenuIfOpen(challenger);
       if (activePinId === target.id) refreshPlayMenuIfOpen(target);
       renderPins();
       return;
     }
 
-    if (defenseType === 'block' || defenseType === 'slide') {
-      // knocked loose — neither pin ends up with it
-      challenger.ballCarrier = false;
-      target.ballCarrier = false;
-      showToast(label + ' won \u2014 ball knocked loose (' + cTotal + ' vs ' + tTotal + ')', 'win');
-    } else if (defenseType === 'dribble') {
+    if (defenseType === 'dribble') {
       // broke past clean — keeps the ball, earns a burst of space
-      challenger.radiusMult = 2;
-      showToast(label + ' won \u2014 burst past them, movement boosted for the next move (' + cTotal + ' vs ' + tTotal + ')', 'win');
-    } else {
-      // tackle / interception — clean winner-takes-ball
-      pins.forEach(p => { p.ballCarrier = false; });
-      challenger.ballCarrier = true;
-      if (ball.active) {
-        ball.x = challenger.x;
-        ball.y = challenger.y;
-        ball.offsetX = 0;
-        ball.offsetY = 0;
+      challenger.radiusMult = pinHasSpecialty(challenger, 'direction-shift') ? 2.5 : 2;
+      challenger.dribbleStreak = (challenger.dribbleStreak || 0) + 1; // Rhythm Dribbler
+      if (pinHasSpecialty(challenger, 'nutmeg-specialist') && (cTotal - tTotal) >= 5) {
+        challenger.nutmegMovesRemaining = 2; // immune to a defensive challenge for the next 2 moves
       }
-      showToast(label + ' won \u2014 ball taken (' + cTotal + ' vs ' + tTotal + ')', 'win');
+      showToast(label + ' won — burst past them, movement boosted for the next move (' + cTotal + ' vs ' + tTotal + ')', 'win');
+    } else {
+      applyChallengeWinOutcome(challenger, target, defenseType, cTotal, tTotal, label);
     }
 
     if (activePinId === challenger.id) refreshPlayMenuIfOpen(challenger);
@@ -6442,9 +7186,11 @@
       p.anchorX = p.x;
       p.anchorY = p.y;
       p.mtlAttackNat1Penalty = false; // its "until the chunk ends" duration is up
+      p.explosiveStartUsedThisChunk = false; // Explosive Start — fresh chance each new chunk
       // note: radiusMult is intentionally NOT reset here — Acceleration/Agility
       // boosts last until the pin actually moves once, not until the round ends
     });
+    tickSpecialtyCooldowns();
   }
 
   // ---- Chunk snapshots: each chunk remembers exactly how the board looked
@@ -6878,7 +7624,8 @@
     return {
       id: null, name: '', number: '', position: 'Attackers',
       stats: { ACC: 0, AGL: 0, STR: 0, SPD: 0, MTL: 0 },
-      speedster: false, talent: null, talent2: null,
+      speedster: false, weapon: false, talent: null, talent2: null,
+      specialty1: null, specialty2: null,
       avatar: null, // small compressed data URL, purely cosmetic — never shown on the field itself
       npc: false, npcTeamId: null
     };
@@ -6936,8 +7683,10 @@
     document.getElementById('characterNumberInput').value = editingCharacter.number;
     document.getElementById('characterPositionSelect').value = editingCharacter.position;
     document.getElementById('characterSpeedsterCheck').checked = !!editingCharacter.speedster;
+    document.getElementById('characterWeaponCheck').checked = !!editingCharacter.weapon;
     document.getElementById('characterTalentSelect').value = editingCharacter.talent || '';
     document.getElementById('characterTalentSelect2').value = editingCharacter.talent2 || '';
+    refreshCharacterEditorSpecialtySelects();
     document.getElementById('characterNpcCheck').checked = !!editingCharacter.npc;
     const npcTeamSelectEl = document.getElementById('characterNpcTeamSelect');
     npcTeamSelectEl.innerHTML = '<option value="">&mdash; No team selected &mdash;</option>';
@@ -7037,8 +7786,31 @@
   document.getElementById('characterCancelBtn').addEventListener('click', closeCharacterEditor);
   document.getElementById('characterPositionSelect').addEventListener('change', (e) => { if (editingCharacter) editingCharacter.position = e.target.value; });
   document.getElementById('characterSpeedsterCheck').addEventListener('change', (e) => { if (editingCharacter) editingCharacter.speedster = e.target.checked; });
-  document.getElementById('characterTalentSelect').addEventListener('change', (e) => { if (editingCharacter) editingCharacter.talent = e.target.value || null; });
-  document.getElementById('characterTalentSelect2').addEventListener('change', (e) => { if (editingCharacter) editingCharacter.talent2 = e.target.value || null; });
+  document.getElementById('characterWeaponCheck').addEventListener('change', (e) => { if (editingCharacter) editingCharacter.weapon = e.target.checked; });
+  document.getElementById('characterTalentSelect').addEventListener('change', (e) => { if (editingCharacter) { editingCharacter.talent = e.target.value || null; refreshCharacterEditorSpecialtySelects(); } });
+  document.getElementById('characterTalentSelect2').addEventListener('change', (e) => { if (editingCharacter) { editingCharacter.talent2 = e.target.value || null; refreshCharacterEditorSpecialtySelects(); } });
+
+  // Specialty 1/2 mirror the in-play Character tab's Talented-Eye cap: picking
+  // specialty1 while a Talented Eye talent is set clears specialty2, and
+  // specialty2's select is disabled outright while capped.
+  function refreshCharacterEditorSpecialtySelects(){
+    if (!editingCharacter) return;
+    const capped = hasTalentedEye(editingCharacter);
+    if (capped && editingCharacter.specialty2) editingCharacter.specialty2 = null;
+    characterSpecialty1Select.value = editingCharacter.specialty1 || '';
+    characterSpecialty2Select.disabled = capped;
+    characterSpecialty2Select.value = capped ? '' : (editingCharacter.specialty2 || '');
+  }
+  characterSpecialty1Select.addEventListener('change', () => {
+    if (!editingCharacter) return;
+    editingCharacter.specialty1 = characterSpecialty1Select.value || null;
+    if (editingCharacter.specialty1 && hasTalentedEye(editingCharacter)) editingCharacter.specialty2 = null;
+    refreshCharacterEditorSpecialtySelects();
+  });
+  characterSpecialty2Select.addEventListener('change', () => {
+    if (!editingCharacter || hasTalentedEye(editingCharacter)) return; // disabled while capped, no-op
+    editingCharacter.specialty2 = characterSpecialty2Select.value || null;
+  });
 
   document.getElementById('characterNpcCheck').addEventListener('change', (e) => { if (editingCharacter) editingCharacter.npc = e.target.checked; });
   document.getElementById('characterNpcTeamSelect').addEventListener('change', (e) => { if (editingCharacter) editingCharacter.npcTeamId = e.target.value ? Number(e.target.value) : null; });
@@ -7146,6 +7918,10 @@
     pin.npcTeamId = ch.npcTeamId;
     pin.stats = { ...ch.stats };
     pin.speedster = ch.speedster;
+    pin.weapon = !!ch.weapon;
+    pin.weaponBuffStat = null; // fresh deployment — no carried-over queued buff
+    pin.specialty1 = ch.specialty1 || null;
+    pin.specialty2 = ch.specialty2 || null;
     pin.talent = ch.talent;
     pin.talent2 = ch.talent2;
     pin.talentActive = false; pin.talentUsesLeft = 10;
@@ -7172,6 +7948,7 @@
   // game logic, not approximated.
   // ============================================================
   const TUTORIAL_TOPICS = [
+    { id: 'interactive', title: '🎮 Try It Yourself', html: null }, // special-cased below — renders the sandbox instead of static text
     { id: 'basics', title: 'Getting Started', html: `
       <h3>Getting Started</h3>
       <p><strong>Edit mode</strong> is for setup — placing pins, changing kits, editing stats, building characters. Nothing here costs an action or is bound by turn order.</p>
@@ -7320,6 +8097,299 @@
 
   let activeTutorialTopic = TUTORIAL_TOPICS[0].id;
 
+  // ============================================================
+  // Interactive Tutorial mini-game — a fully self-contained sandbox.
+  // Deliberately does NOT touch pins/ball/shots, markDirty, renderPins,
+  // showToast/logEvent, or anything else that's part of the real match
+  // state or the sync system. Its own local state object, its own DOM,
+  // its own drag handling. Resets every time it's opened (session-only,
+  // by design — nothing here is meant to persist).
+  // ============================================================
+  let tutState = null;
+
+  function newTutState(){
+    return {
+      step: 0,
+      stepDone: false,
+      you: { x: 25, y: 50, radiusMult: 1 },
+      opp: { x: 60, y: 50 }
+    };
+  }
+
+  const TUT_STEPS = [
+    { title: 'Move Your Pin', body: 'Drag your pin (blue, #10) anywhere inside the dashed ring, then let go.' },
+    { title: 'Roll Acceleration', body: 'Tap ROLL to roll SPD (Acceleration). An 11+ total doubles your move radius until you actually move.' },
+    { title: 'Use Dash', body: 'Tap USE DASH — free, no roll needed, but limited uses per match. Watch the ring grow.' },
+    { title: 'Challenge', body: 'Drag close to the defender (red, #4), then tap TACKLE to challenge them for the ball.' },
+    { title: 'Shoot on Goal', body: 'Drag toward the goal on the right, then tap SHOOT.' },
+    { title: 'You’re Ready', body: 'That’s the core loop: move, roll, dash, challenge, shoot. Talents, Weapon, and Specialties all build on top of this.' }
+  ];
+
+  function tutorialRoll(){ return Math.floor(Math.random() * 20) + 1; }
+
+  function buildInteractiveTutorial(content){
+    content.innerHTML = '';
+    tutState = newTutState();
+
+    const wrap = document.createElement('div');
+    wrap.className = 'tut-wrap';
+
+    const banner = document.createElement('div');
+    banner.className = 'tut-banner';
+    const titleEl = document.createElement('h3');
+    const bodyEl = document.createElement('p');
+    const resultEl = document.createElement('p');
+    resultEl.className = 'tut-result';
+    banner.appendChild(titleEl);
+    banner.appendChild(bodyEl);
+    banner.appendChild(resultEl);
+    wrap.appendChild(banner);
+
+    const fieldWrap = document.createElement('div');
+    fieldWrap.className = 'tut-field-wrap';
+    const field = document.createElement('div');
+    field.className = 'tut-field';
+    fieldWrap.appendChild(field);
+    wrap.appendChild(fieldWrap);
+
+    const goal = document.createElement('div');
+    goal.className = 'tut-goal';
+    field.appendChild(goal);
+
+    const ring = document.createElement('div');
+    ring.className = 'tut-ring';
+    field.appendChild(ring);
+
+    const ball = document.createElement('div');
+    ball.className = 'tut-ball';
+    field.appendChild(ball);
+
+    const oppPin = document.createElement('div');
+    oppPin.className = 'tut-pin tut-pin-opp';
+    oppPin.textContent = '4';
+    field.appendChild(oppPin);
+
+    const youPin = document.createElement('div');
+    youPin.className = 'tut-pin tut-pin-you';
+    youPin.textContent = '10';
+    field.appendChild(youPin);
+
+    const actionsRow = document.createElement('div');
+    actionsRow.className = 'tut-actions';
+    wrap.appendChild(actionsRow);
+
+    const controlsRow = document.createElement('div');
+    controlsRow.className = 'tut-controls';
+    const restartBtn = document.createElement('button');
+    restartBtn.className = 'btn'; restartBtn.type = 'button'; restartBtn.textContent = 'Restart';
+    restartBtn.addEventListener('click', () => buildInteractiveTutorial(content));
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'btn dash-use-btn'; nextBtn.type = 'button';
+    controlsRow.appendChild(restartBtn);
+    controlsRow.appendChild(nextBtn);
+    wrap.appendChild(controlsRow);
+
+    content.appendChild(wrap);
+
+    let tackleBtnRef = null;
+    let shootBtnRef = null;
+
+    function tackleDistance(){
+      return Math.hypot(tutState.you.x - tutState.opp.x, tutState.you.y - tutState.opp.y);
+    }
+
+    function positionAll(){
+      youPin.style.left = tutState.you.x + '%';
+      youPin.style.top = tutState.you.y + '%';
+      oppPin.style.left = tutState.opp.x + '%';
+      oppPin.style.top = tutState.opp.y + '%';
+      ball.style.left = tutState.you.x + '%'; // ball stays glued to you — this demo never has you without it
+      ball.style.top = tutState.you.y + '%';
+      const radiusPct = 10 * (tutState.you.radiusMult || 1);
+      ring.style.width = (radiusPct * 2) + '%';
+      ring.style.height = (radiusPct * 2) + '%';
+      ring.style.left = tutState.you.x + '%';
+      ring.style.top = tutState.you.y + '%';
+      ring.style.display = (tutState.step === 0 || tutState.step === 1 || tutState.step === 2 || tutState.step === 3 || tutState.step === 4) ? 'block' : 'none';
+    }
+
+    function renderStep(){
+      const s = TUT_STEPS[tutState.step];
+      titleEl.textContent = 'Step ' + (tutState.step + 1) + ' of ' + TUT_STEPS.length + ': ' + s.title;
+      bodyEl.textContent = s.body;
+      resultEl.textContent = '';
+      actionsRow.innerHTML = '';
+      tackleBtnRef = null;
+      shootBtnRef = null;
+      nextBtn.disabled = !tutState.stepDone;
+      nextBtn.textContent = tutState.step === TUT_STEPS.length - 1
+        ? 'Restart from Step 1'
+        : (tutState.stepDone ? 'Next →' : 'Do the thing first');
+
+      if (tutState.step === 1) {
+        const rollBtn = document.createElement('button');
+        rollBtn.className = 'btn dash-use-btn'; rollBtn.type = 'button'; rollBtn.textContent = 'ROLL (SPD)';
+        rollBtn.addEventListener('click', () => {
+          const roll = tutorialRoll();
+          const total = roll + 12; // demo SPD stat
+          if (roll === 1) {
+            tutState.you.radiusMult = 1;
+            resultEl.textContent = 'Natural 1! In a real match this would cost you a dash charge and your whole turn.';
+          } else if (roll === 20) {
+            tutState.you.radiusMult = 2.5;
+            resultEl.textContent = 'Natural 20! (' + roll + ' + 12 = ' + total + ') — a free burst, same as a Dash.';
+          } else if (total >= 11) {
+            tutState.you.radiusMult = 2;
+            resultEl.textContent = 'Rolled ' + roll + ' + 12 = ' + total + ' — 11+! Move radius doubled.';
+          } else {
+            tutState.you.radiusMult = 1;
+            resultEl.textContent = 'Rolled ' + roll + ' + 12 = ' + total + ' — not quite 11, radius stays normal.';
+          }
+          tutState.stepDone = true;
+          positionAll();
+          nextBtn.disabled = false;
+          nextBtn.textContent = 'Next →';
+          rollBtn.disabled = true; // one roll per step, same spirit as accelerationLocked
+        });
+        actionsRow.appendChild(rollBtn);
+      }
+
+      if (tutState.step === 2) {
+        const dashBtn = document.createElement('button');
+        dashBtn.className = 'btn dash-use-btn'; dashBtn.type = 'button'; dashBtn.textContent = 'USE DASH';
+        dashBtn.addEventListener('click', () => {
+          tutState.you.radiusMult = 2.5;
+          resultEl.textContent = 'Dash used — free, no roll, radius jumps to 2.5x until you move next.';
+          tutState.stepDone = true;
+          positionAll();
+          nextBtn.disabled = false;
+          nextBtn.textContent = 'Next →';
+          dashBtn.disabled = true;
+        });
+        actionsRow.appendChild(dashBtn);
+      }
+
+      if (tutState.step === 3) {
+        const tackleBtn = document.createElement('button');
+        tackleBtn.className = 'btn dash-use-btn'; tackleBtn.type = 'button'; tackleBtn.textContent = 'TACKLE';
+        tackleBtn.disabled = tackleDistance() > 12;
+        tackleBtn.title = tackleBtn.disabled ? 'Get closer to the defender first' : '';
+        tackleBtn.addEventListener('click', () => {
+          const yourRoll = tutorialRoll() + 8; // demo STR
+          const theirRoll = tutorialRoll() + 8;
+          if (yourRoll > theirRoll) {
+            resultEl.textContent = 'You: ' + yourRoll + ' vs Them: ' + theirRoll + ' — you win the ball!';
+          } else {
+            resultEl.textContent = 'You: ' + yourRoll + ' vs Them: ' + theirRoll + ' — they hold on. (Ties favor the defender.)';
+          }
+          tutState.stepDone = true;
+          nextBtn.disabled = false;
+          nextBtn.textContent = 'Next →';
+        });
+        actionsRow.appendChild(tackleBtn);
+        tackleBtnRef = tackleBtn;
+      }
+
+      if (tutState.step === 4) {
+        const shootBtn = document.createElement('button');
+        shootBtn.className = 'btn dash-use-btn'; shootBtn.type = 'button'; shootBtn.textContent = 'SHOOT';
+        const closeEnough = tutState.you.x >= 78;
+        shootBtn.disabled = !closeEnough;
+        shootBtn.title = closeEnough ? '' : 'Get closer to the goal first';
+        shootBtn.addEventListener('click', () => {
+          const roll = tutorialRoll();
+          const total = roll + 10; // demo ACC
+          if (total >= 15) resultEl.textContent = 'GOAL! Rolled ' + roll + ' + 10 = ' + total + '.';
+          else resultEl.textContent = 'Saved — rolled ' + roll + ' + 10 = ' + total + '. Still counts as practice!';
+          tutState.stepDone = true;
+          nextBtn.disabled = false;
+          nextBtn.textContent = 'Restart from Step 1';
+        });
+        actionsRow.appendChild(shootBtn);
+        shootBtnRef = shootBtn;
+      }
+
+      if (tutState.step === 5) {
+        const doneNote = document.createElement('p');
+        doneNote.className = 'stat-hint';
+        doneNote.textContent = 'Head back to the board with "← Back to Board" above, or hit Restart to run through this again.';
+        actionsRow.appendChild(doneNote);
+        tutState.stepDone = true;
+      }
+    }
+
+    nextBtn.addEventListener('click', () => {
+      if (!tutState.stepDone) return;
+      if (tutState.step >= TUT_STEPS.length - 1) {
+        tutState.step = 0;
+        tutState.stepDone = false;
+        tutState.you = { x: 25, y: 50, radiusMult: 1 };
+      } else {
+        tutState.step += 1;
+        tutState.stepDone = false;
+      }
+      positionAll();
+      renderStep();
+    });
+
+    // ---- Drag handling for the demo "you" pin only. Entirely local pointer
+    // events on this one element — no shared listeners, no pins array, no
+    // markDirty/renderPins/sync of any kind. ----
+    let dragPointerId = null;
+    let dragStartX = 0, dragStartY = 0;
+
+    youPin.addEventListener('pointerdown', (e) => {
+      if (tutState.step === 5) return;
+      e.preventDefault();
+      youPin.setPointerCapture(e.pointerId);
+      dragPointerId = e.pointerId;
+      dragStartX = tutState.you.x;
+      dragStartY = tutState.you.y;
+      youPin.classList.add('dragging');
+    });
+    youPin.addEventListener('pointermove', (e) => {
+      if (dragPointerId === null || e.pointerId !== dragPointerId) return;
+      const rect = field.getBoundingClientRect();
+      let x = ((e.clientX - rect.left) / rect.width) * 100;
+      let y = ((e.clientY - rect.top) / rect.height) * 100;
+      x = Math.max(3, Math.min(97, x));
+      y = Math.max(3, Math.min(97, y));
+      tutState.you.x = x;
+      tutState.you.y = y;
+      positionAll();
+      if (tutState.step === 3 && tackleBtnRef) {
+        tackleBtnRef.disabled = tackleDistance() > 12;
+        tackleBtnRef.title = tackleBtnRef.disabled ? 'Get closer to the defender first' : '';
+      }
+      if (tutState.step === 4 && shootBtnRef) {
+        const closeEnough = tutState.you.x >= 78;
+        shootBtnRef.disabled = !closeEnough;
+        shootBtnRef.title = closeEnough ? '' : 'Get closer to the goal first';
+      }
+    });
+    function endDrag(e){
+      if (dragPointerId === null || e.pointerId !== dragPointerId) return;
+      dragPointerId = null;
+      youPin.classList.remove('dragging');
+      if (tutState.step === 0) {
+        const moved = Math.hypot(tutState.you.x - dragStartX, tutState.you.y - dragStartY) > 4;
+        if (moved) {
+          tutState.stepDone = true;
+          resultEl.textContent = 'Move confirmed.';
+          nextBtn.disabled = false;
+          nextBtn.textContent = 'Next →';
+        } else {
+          resultEl.textContent = 'Drag it a bit further, then let go.';
+        }
+      }
+    }
+    youPin.addEventListener('pointerup', endDrag);
+    youPin.addEventListener('pointercancel', endDrag);
+
+    positionAll();
+    renderStep();
+  }
+
   function renderTutorial(){
     const sidebar = document.getElementById('tutorialSidebar');
     const content = document.getElementById('tutorialContent');
@@ -7337,7 +8407,11 @@
       sidebar.appendChild(btn);
     });
     const active = TUTORIAL_TOPICS.find(t => t.id === activeTutorialTopic) || TUTORIAL_TOPICS[0];
-    content.innerHTML = active.html;
+    if (active.id === 'interactive') {
+      buildInteractiveTutorial(content);
+    } else {
+      content.innerHTML = active.html;
+    }
   }
 
   document.getElementById('tutorialBtn').addEventListener('click', () => {
@@ -7377,7 +8451,8 @@
       id: tcPlayerIdSeq++,
       name: '', number: '', position: 'Attackers',
       stats: { ACC: 0, AGL: 0, STR: 0, SPD: 0, MTL: 0 },
-      speedster: false, talent: null, talent2: null,
+      speedster: false, weapon: false, talent: null, talent2: null,
+      specialty1: null, specialty2: null,
       avatar: null, npc: false, npcTeamId: null,
       onBench: !!onBench, x: x != null ? x : 50, y: y != null ? y : 50,
       benchSlot: benchSlot != null ? benchSlot : null
@@ -7532,8 +8607,10 @@
     document.getElementById('tcNumberInput').value = player.number;
     document.getElementById('tcPositionSelect').value = player.position;
     document.getElementById('tcSpeedsterCheck').checked = !!player.speedster;
+    document.getElementById('tcWeaponCheck').checked = !!player.weapon;
     document.getElementById('tcTalentSelect').value = player.talent || '';
     document.getElementById('tcTalentSelect2').value = player.talent2 || '';
+    refreshTcEditorSpecialtySelects(player);
     document.getElementById('tcNpcCheck').checked = !!player.npc;
     const npcTeamSelectEl = document.getElementById('tcNpcTeamSelect');
     npcTeamSelectEl.innerHTML = '<option value="">&mdash; No team selected &mdash;</option>';
@@ -7609,8 +8686,32 @@
   });
   document.getElementById('tcPositionSelect').addEventListener('change', (e) => { const p = getTcActivePlayer(); if (p) p.position = e.target.value; });
   document.getElementById('tcSpeedsterCheck').addEventListener('change', (e) => { const p = getTcActivePlayer(); if (p) p.speedster = e.target.checked; });
-  document.getElementById('tcTalentSelect').addEventListener('change', (e) => { const p = getTcActivePlayer(); if (p) p.talent = e.target.value || null; });
-  document.getElementById('tcTalentSelect2').addEventListener('change', (e) => { const p = getTcActivePlayer(); if (p) p.talent2 = e.target.value || null; });
+  document.getElementById('tcWeaponCheck').addEventListener('change', (e) => { const p = getTcActivePlayer(); if (p) p.weapon = e.target.checked; });
+  document.getElementById('tcTalentSelect').addEventListener('change', (e) => { const p = getTcActivePlayer(); if (p) { p.talent = e.target.value || null; refreshTcEditorSpecialtySelects(p); } });
+  document.getElementById('tcTalentSelect2').addEventListener('change', (e) => { const p = getTcActivePlayer(); if (p) { p.talent2 = e.target.value || null; refreshTcEditorSpecialtySelects(p); } });
+
+  // Specialty 1/2 for the Team Creator editor — same Talented-Eye cap as the
+  // Character Library editor and the in-play Character tab.
+  function refreshTcEditorSpecialtySelects(player){
+    if (!player) return;
+    const capped = hasTalentedEye(player);
+    if (capped && player.specialty2) player.specialty2 = null;
+    tcSpecialty1Select.value = player.specialty1 || '';
+    tcSpecialty2Select.disabled = capped;
+    tcSpecialty2Select.value = capped ? '' : (player.specialty2 || '');
+  }
+  tcSpecialty1Select.addEventListener('change', () => {
+    const p = getTcActivePlayer();
+    if (!p) return;
+    p.specialty1 = tcSpecialty1Select.value || null;
+    if (p.specialty1 && hasTalentedEye(p)) p.specialty2 = null;
+    refreshTcEditorSpecialtySelects(p);
+  });
+  tcSpecialty2Select.addEventListener('change', () => {
+    const p = getTcActivePlayer();
+    if (!p || hasTalentedEye(p)) return; // disabled while capped, no-op
+    p.specialty2 = tcSpecialty2Select.value || null;
+  });
   document.getElementById('tcNpcCheck').addEventListener('change', (e) => { const p = getTcActivePlayer(); if (p) p.npc = e.target.checked; });
   document.getElementById('tcNpcTeamSelect').addEventListener('change', (e) => { const p = getTcActivePlayer(); if (p) p.npcTeamId = e.target.value ? Number(e.target.value) : null; });
 
@@ -7803,6 +8904,8 @@
         npcPosition: player.position,
         stats: { ...player.stats },
         speedster: player.speedster,
+        weapon: !!player.weapon,
+        specialty1: player.specialty1 || null, specialty2: player.specialty2 || null,
         talent: player.talent, talent2: player.talent2,
         npc: player.npc, npcTeamId: player.npcTeamId
       }));
@@ -7818,6 +8921,8 @@
         npcPosition: player.position,
         stats: { ...player.stats },
         speedster: player.speedster,
+        weapon: !!player.weapon,
+        specialty1: player.specialty1 || null, specialty2: player.specialty2 || null,
         talent: player.talent, talent2: player.talent2,
         npc: player.npc, npcTeamId: player.npcTeamId
       }));
@@ -8059,6 +9164,8 @@
     });
   }
 
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   async function writePresenceHeartbeat(){
     if (!conferenceRoom || !window.storage) return;
     try {
@@ -8083,6 +9190,8 @@
     } catch (err) { /* quietly ignore — we'll try again on the next heartbeat cycle */ }
   }
 
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   async function fetchPresence(){
     if (!conferenceRoom || !window.storage) return;
     try {
@@ -8271,6 +9380,66 @@
   notepadHeader.addEventListener('pointerup', endNotepadDrag);
   notepadHeader.addEventListener('pointercancel', endNotepadDrag);
 
+  // ---- Specialty reference window ----
+  const specialtyRefPanel = document.getElementById('specialtyRefPanel');
+  const specialtyRefHeader = document.getElementById('specialtyRefHeader');
+  let specialtyRefBuilt = false;
+
+  function buildSpecialtyRefBody(){
+    if (specialtyRefBuilt) return;
+    const body = document.getElementById('specialtyRefBody');
+    SPECIALTY_CATEGORIES.forEach(cat => {
+      const catHeader = document.createElement('p');
+      catHeader.className = 'specialty-ref-category';
+      catHeader.textContent = cat.name;
+      body.appendChild(catHeader);
+      cat.specialties.forEach(s => {
+        const item = document.createElement('p');
+        item.className = 'specialty-ref-item';
+        item.innerHTML = '<b>' + s.name + '</b> \u2014 ' + s.desc;
+        body.appendChild(item);
+      });
+    });
+    specialtyRefBuilt = true;
+  }
+
+  document.getElementById('openSpecialtyRefBtn').addEventListener('click', () => {
+    buildSpecialtyRefBody();
+    specialtyRefPanel.classList.remove('hidden');
+  });
+  document.getElementById('closeSpecialtyRefBtn').addEventListener('click', () => {
+    specialtyRefPanel.classList.add('hidden');
+  });
+
+  // drag-to-move by the header bar — same pattern as the Notepad
+  let specialtyRefDrag = null;
+  specialtyRefHeader.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return;
+    const rect = specialtyRefPanel.getBoundingClientRect();
+    specialtyRefDrag = { offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top, pointerId: e.pointerId };
+    specialtyRefHeader.setPointerCapture(e.pointerId);
+    specialtyRefHeader.classList.add('dragging');
+  });
+  specialtyRefHeader.addEventListener('pointermove', (e) => {
+    if (!specialtyRefDrag || e.pointerId !== specialtyRefDrag.pointerId) return;
+    let left = e.clientX - specialtyRefDrag.offsetX;
+    let top = e.clientY - specialtyRefDrag.offsetY;
+    left = Math.max(4, Math.min(window.innerWidth - 60, left));
+    top = Math.max(4, Math.min(window.innerHeight - 60, top));
+    specialtyRefPanel.style.left = left + 'px';
+    specialtyRefPanel.style.top = top + 'px';
+    specialtyRefPanel.style.right = 'auto';
+  });
+  function endSpecialtyRefDrag(e){
+    if (!specialtyRefDrag || e.pointerId !== specialtyRefDrag.pointerId) return;
+    specialtyRefHeader.releasePointerCapture(e.pointerId);
+    specialtyRefHeader.classList.remove('dragging');
+    specialtyRefDrag = null;
+  }
+  specialtyRefHeader.addEventListener('pointerup', endSpecialtyRefDrag);
+  specialtyRefHeader.addEventListener('pointercancel', endSpecialtyRefDrag);
+
+
   document.getElementById('conferenceModalClose').addEventListener('click', () => {
     conferenceModal.classList.add('hidden');
   });
@@ -8431,6 +9600,8 @@
     if (deletedPinIds.length > 500) deletedPinIds = deletedPinIds.slice(-500); // avoid unbounded growth over a long session
   }
 
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   function mergePins(localPins, remotePins, remoteDeletedIds){
     if (remoteDeletedIds && remoteDeletedIds.length) markPinsDeleted(remoteDeletedIds); // adopt tombstones we didn't know about yet
     const deletedSet = new Set(deletedPinIds);
@@ -8454,6 +9625,8 @@
   // remotely survives, a shot known both places keeps whichever side's copy
   // is genuinely newer, and a tombstoned id never comes back regardless of
   // what timestamp arrives attached to it.
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   function mergeShots(localShots, remoteShots, remoteDeletedIds){
     if (remoteDeletedIds && remoteDeletedIds.length) markShotsDeleted(remoteDeletedIds);
     const deletedSet = new Set(deletedShotIds);
@@ -8489,6 +9662,8 @@
     // reset entirely and is discarded — nothing to do here, local already wins.
   }
 
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   async function saveState(opts){
     const silent = !!(opts && opts.silent);
     if (!window.storage) {
@@ -8619,6 +9794,8 @@
   function setupKey(){ return STORAGE_KEY + '_setup'; }
   let lastSavedSetupPayload = '';
 
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   async function saveSetupStateIfChanged(){
     if (!window.storage) return;
     let payload = JSON.stringify({ teams, teamIdSeq, saves, saveIdSeq, characters, characterIdSeq, savedTeams, savedTeamIdSeq });
@@ -8652,6 +9829,8 @@
   }
 
   // Applies a parsed state object (from load or from a remote poll) to the live board.
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   function applyLoadedState(state){
     applyingRemote = true;
     noteObservedTimestamp(state.version);
@@ -8770,6 +9949,8 @@
   // in anyone else's newer save — but only when it's safe (not mid-drag/mid-menu),
   // so an incoming update never yanks something out from under you.
   let tickCount = 0;
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
   async function syncTick(){
     tickCount += 1;
     if (!window.storage) return;
