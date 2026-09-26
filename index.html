@@ -1251,6 +1251,67 @@
     margin-top:40px;
   }
 
+  /* Pin Lock — per-screen only, never synced (see the JS comment where it's
+     enforced for why). Reuses the .team-stats-overlay shell for free. */
+  .pin-lock-blurb{
+    color:var(--muted);
+    font-size:12.5px;
+    line-height:1.5;
+    max-width:560px;
+    margin:0 0 16px;
+  }
+  .pin-lock-master-row{
+    display:flex; align-items:center; gap:10px;
+    font-size:14px; font-weight:600;
+    padding:10px 14px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:10px;
+    cursor:pointer;
+    margin-bottom:12px;
+  }
+  .pin-lock-master-row input{ width:17px; height:17px; accent-color:var(--blue); cursor:pointer; }
+  .pin-lock-actions{ display:flex; gap:8px; margin-bottom:14px; }
+  .pin-lock-list{
+    display:flex; flex-direction:column; gap:6px;
+    max-width:560px;
+  }
+  .pin-lock-row{
+    display:flex; align-items:center; gap:12px;
+    padding:8px 14px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:8px;
+  }
+  .pin-lock-row input{ width:17px; height:17px; accent-color:var(--blue); cursor:pointer; }
+  .pin-lock-row-swatch{
+    width:20px; height:20px; border-radius:50%;
+    border:2px solid rgba(255,255,255,.6);
+    flex:0 0 auto;
+  }
+  .pin-lock-row-label{ font-size:13.5px; font-weight:600; flex:1; }
+  .pin-lock-row-team{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+
+  /* Visual cue + actual touch/click blocking for a pin that's locked for ME
+     specifically — purely local rendering + hit-testing, doesn't touch pin
+     data or sync in any way. pointer-events:none means a locked pin doesn't
+     intercept taps/clicks at all — they pass straight through to whatever's
+     underneath (e.g. your own pin buried under a stack of others), instead
+     of "catching" the tap and doing nothing. While a target pick is pending
+     (Tackle/Block/Slide/Interception, a sub, or a Passing specialty like
+     Nasty Pass waiting for a pin), pin-lock-targeting-active re-enables
+     pointer-events on locked pins so they can still be selected as a target
+     — see isTargetPickPending()/syncPinLockTargetingMode() in the JS. */
+  .pin.pin-locked-for-me{
+    opacity:.4;
+    filter:grayscale(.5);
+    cursor:not-allowed;
+    pointer-events:none;
+  }
+  body.pin-lock-targeting-active .pin.pin-locked-for-me{
+    pointer-events:auto;
+  }
+
   .team-card{
     background:var(--panel);
     border:1px solid var(--line);
@@ -2166,6 +2227,7 @@
       <button class="mobile-menu-btn" id="mobileMenuBtn" type="button" title="More options">&#9776;</button>
       <div class="header-secondary" id="headerSecondary">
         <button class="btn" id="tutorialBtn" type="button">How to Play</button>
+        <button class="btn" id="pinLockBtn" type="button" title="Choose which pins you're allowed to control on your own screen">Pin Lock</button>
         <button class="btn" id="teamStatsBtn" type="button">Team Stats</button>
         <button class="btn" id="savesBtn" type="button">Saves</button>
         <button class="btn" id="conferenceBtn" type="button">Conference</button>
@@ -2398,6 +2460,32 @@
   </div>
   <div class="team-stats-body" id="teamsList">
     <p class="team-stats-empty" id="teamsEmpty">No teams yet. Click "+ Add Team" to create one.</p>
+  </div>
+</div>
+
+<div class="team-stats-overlay hidden" id="pinLockOverlay">
+  <div class="team-stats-header">
+    <h2>Pin Lock</h2>
+    <div class="team-stats-header-actions">
+      <button class="btn" id="backToBoardFromPinLockBtn" type="button">&larr; Back to Board</button>
+    </div>
+  </div>
+  <div class="team-stats-body">
+    <p class="pin-lock-blurb">
+      This is a <strong>per-screen</strong> setting — it only affects what YOU can grab on
+      YOUR device, and never syncs to anyone else. Handy on mobile when pins are bunched
+      together and you keep grabbing the wrong one.
+    </p>
+    <label class="pin-lock-master-row">
+      <input type="checkbox" id="pinLockEnabledToggle">
+      <span>Enable Pin Lock (when off, you can control every pin as normal)</span>
+    </label>
+    <div class="pin-lock-actions" id="pinLockQuickActions">
+      <button class="btn" id="pinLockSelectAllBtn" type="button">Select All</button>
+      <button class="btn" id="pinLockClearAllBtn" type="button">Clear All</button>
+    </div>
+    <div class="pin-lock-list" id="pinLockList"></div>
+    <p class="team-stats-empty" id="pinLockEmpty" style="display:none;">No pins on the field yet.</p>
   </div>
 </div>
 
@@ -3351,6 +3439,41 @@
 
   let pins = [];
   let idSeq = 1;
+  // Pin Lock — purely a per-screen, local UI filter (never synced to peers,
+  // never written into pins/state). When enabled, only pins whose id is in
+  // unlockedPinIdsForMe can be dragged or have their menu opened, ON THIS
+  // BROWSER ONLY. Enforced at the three places a pin interaction can start:
+  // onPinPointerDown (drag), the pin's contextmenu handler (desktop
+  // right-click), and its attachMobileTapMenu onTap (mobile tap).
+  let pinLockEnabled = false;
+  const unlockedPinIdsForMe = new Set();
+  function isPinLockedForMe(pin){
+    return pinLockEnabled && !unlockedPinIdsForMe.has(pin.id);
+  }
+  // True while THIS player is mid-way through picking a target pin for
+  // something their own pin started (a Tackle/Block/Slide/Interception
+  // challenge, subbing a bench pin onto the field, or a Passing specialty
+  // like Nasty Pass/Long Ball/Playmaker's Touch waiting for a pin to apply
+  // to). Pin Lock must never block these — you need to be able to target an
+  // opponent's (locked) pin for a tackle, or an ally's (locked) pin for a
+  // pass buff — only your own free-form grabbing of a locked pin is blocked.
+  function isTargetPickPending(){
+    return !!challengeState || !!subState || specialtyTargetQueue.length > 0;
+  }
+  // Single source of truth both the CSS (pointer-events) and the JS guards
+  // below check, so a locked pin is either fully click-through-able or
+  // fully targetable — never in a half-state where CSS and JS disagree.
+  function pinLockAllowsInteraction(pin){
+    return !isPinLockedForMe(pin) || isTargetPickPending();
+  }
+  // Keeps a body class in sync with isTargetPickPending() so the CSS can
+  // re-enable pointer-events on locked pins exactly while a target pick is
+  // in flight (see .pin-locked-for-me below). Called at every place those
+  // three pending-pick states change, plus from renderPins() as a safety
+  // net in case a call site is ever missed.
+  function syncPinLockTargetingMode(){
+    document.body.classList.toggle('pin-lock-targeting-active', isTargetPickPending());
+  }
   let spawnIndex = 0;
   let activePinId = null;
   let dragState = null;
@@ -4289,11 +4412,13 @@
     aimHintText.textContent = 'Sub \u2014 click the pin on the field to swap with \u2014 Esc to cancel';
     aimHint.classList.remove('hidden');
     document.addEventListener('keydown', onAimKeydown);
+    syncPinLockTargetingMode(); // a locked field pin must stay targetable while picking a sub
   }
 
   function cancelSub(){
     subState = null;
     field.classList.remove('aiming');
+    syncPinLockTargetingMode();
     if (!aimingType && !challengeState) {
       aimHint.classList.add('hidden');
       document.removeEventListener('keydown', onAimKeydown);
@@ -4326,6 +4451,7 @@
   // ---- render ----
   function renderPins(){
     markDirty();
+    syncPinLockTargetingMode(); // safety net: keeps locked-pin click-through in sync even if a caller forgot to
     pinLayer.innerHTML = '';
     const placed = [];
 
@@ -4484,9 +4610,14 @@
         el.appendChild(pips);
       }
 
+      // Pin Lock: purely local visual cue + interaction gate, see its
+      // definition near `let pins = [];` — never touches pin data or sync.
+      el.classList.toggle('pin-locked-for-me', isPinLockedForMe(pin));
+
       el.addEventListener('pointerdown', onPinPointerDown);
       el.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        if (!pinLockAllowsInteraction(pin)) return; // click-through when locked; see .pin-locked-for-me
         if (pendingMoves[pin.id]) return; // must confirm/cancel the move first
         if (pendingChallengeResponse && pendingChallengeResponse.targetId === pin.id) return; // must respond first
         if (pendingDribbleOutcome && pendingDribbleOutcome.defenderId === pin.id) return; // must choose first
@@ -4497,6 +4628,7 @@
         }
       });
       attachMobileTapMenu(el, (e) => {
+        if (!pinLockAllowsInteraction(pin)) return; // click-through when locked; see .pin-locked-for-me
         if (pendingMoves[pin.id]) return;
         if (pendingChallengeResponse && pendingChallengeResponse.targetId === pin.id) return;
         if (pendingDribbleOutcome && pendingDribbleOutcome.defenderId === pin.id) return;
@@ -4856,11 +4988,13 @@
     aimHintText.textContent = 'Challenge (' + CHALLENGE_LABELS[defenseType] + ') \u2014 click the pin to challenge \u2014 Esc to cancel';
     aimHint.classList.remove('hidden');
     document.addEventListener('keydown', onAimKeydown);
+    syncPinLockTargetingMode(); // a locked opponent pin must stay targetable for a challenge
   }
 
   function cancelChallenge(){
     challengeState = null;
     field.classList.remove('aiming');
+    syncPinLockTargetingMode();
     if (!aimingType && !subState) aimHint.classList.add('hidden');
     if (!aimingType && !subState) document.removeEventListener('keydown', onAimKeydown);
   }
@@ -4988,6 +5122,7 @@
     const id = Number(el.dataset.id);
     const pin = pins.find(p => p.id === id);
     if (!pin) return;
+    if (!pinLockAllowsInteraction(pin)) return; // click-through when locked; see .pin-locked-for-me
     if (pendingMoves[id]) return; // pending confirmation, ignore
     if (pendingChallengeResponse && pendingChallengeResponse.targetId === id) return; // must respond first
     if (pendingDribbleOutcome && pendingDribbleOutcome.defenderId === id) return; // must choose first
@@ -6281,6 +6416,7 @@
     const sourcePinId = opts && opts.sourcePinId;
     specialtyTargetQueue.push({ amount, label, type, sourcePinId });
     if (specialtyTargetQueue.length === 1) announceSpecialtyTargetPick();
+    syncPinLockTargetingMode(); // a locked pin must stay targetable while a pick is queued
   }
 
   function announceSpecialtyTargetPick(){
@@ -7740,6 +7876,79 @@
   });
   document.getElementById('backToBoardBtn').addEventListener('click', () => {
     teamStatsOverlay.classList.add('hidden');
+  });
+
+  // ---- Pin Lock: per-screen only, lets a player choose which pins THEY can
+  // grab on THEIR device — never synced, see isPinLockedForMe() near `let
+  // pins = [];` for the enforcement side. This block only builds the picker
+  // UI and flips the local state; it never writes to pins/state or calls
+  // markDirty(), so it can't affect anyone else's screen. ----
+  const pinLockOverlay = document.getElementById('pinLockOverlay');
+  const pinLockList = document.getElementById('pinLockList');
+  const pinLockEmpty = document.getElementById('pinLockEmpty');
+  const pinLockEnabledToggle = document.getElementById('pinLockEnabledToggle');
+
+  function renderPinLockList(){
+    pinLockList.innerHTML = '';
+    if (!pins.length) {
+      pinLockEmpty.style.display = 'block';
+      return;
+    }
+    pinLockEmpty.style.display = 'none';
+    pins.forEach((pin) => {
+      const row = document.createElement('label');
+      row.className = 'pin-lock-row';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = unlockedPinIdsForMe.has(pin.id);
+      cb.addEventListener('change', () => {
+        if (cb.checked) unlockedPinIdsForMe.add(pin.id);
+        else unlockedPinIdsForMe.delete(pin.id);
+        renderPins(); // refresh the locked-look on the board — local only
+      });
+
+      const swatch = document.createElement('span');
+      swatch.className = 'pin-lock-row-swatch';
+      swatch.style.background = pin.color || '#2f8fff';
+
+      const label = document.createElement('span');
+      label.className = 'pin-lock-row-label';
+      label.textContent = pinLabel(pin);
+
+      const team = document.createElement('span');
+      team.className = 'pin-lock-row-team';
+      team.textContent = pin.team === 'A' ? 'Team A' : pin.team === 'B' ? 'Team B' : '';
+
+      row.appendChild(cb);
+      row.appendChild(swatch);
+      row.appendChild(label);
+      row.appendChild(team);
+      pinLockList.appendChild(row);
+    });
+  }
+
+  document.getElementById('pinLockBtn').addEventListener('click', () => {
+    pinLockEnabledToggle.checked = pinLockEnabled;
+    renderPinLockList();
+    pinLockOverlay.classList.remove('hidden');
+  });
+  document.getElementById('backToBoardFromPinLockBtn').addEventListener('click', () => {
+    pinLockOverlay.classList.add('hidden');
+  });
+  pinLockEnabledToggle.addEventListener('change', () => {
+    pinLockEnabled = pinLockEnabledToggle.checked;
+    renderPins();
+  });
+  document.getElementById('pinLockSelectAllBtn').addEventListener('click', () => {
+    pins.forEach(p => unlockedPinIdsForMe.add(p.id));
+    renderPinLockList();
+    renderPins();
+  });
+  document.getElementById('pinLockClearAllBtn').addEventListener('click', () => {
+    unlockedPinIdsForMe.clear();
+    renderPinLockList();
+    renderPins();
   });
 
   // ---- Saves: pre-built field sheets you can load back onto the board ----
