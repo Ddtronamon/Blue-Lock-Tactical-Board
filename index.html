@@ -2051,6 +2051,24 @@
     padding:14px;
     font-size:13px;
   }
+
+  /* Mobile HUD in portrait: give the field its own phone-shaped stage
+     (roughly real phone viewport dimensions) instead of the small landscape
+     strip the normal aspect-ratio math produces on a tall screen. This only
+     resizes .stage-wrap — the field's own box (and everything pin math is
+     based on) keeps its real 1240:700 proportions and just letterboxes
+     (centers, with empty space above/below) inside that taller stage. Scoped
+     to body.mobile-hud + portrait, so desktop and landscape-mobile are both
+     completely untouched. */
+  @media (orientation: portrait){
+    body.mobile-hud .app{ overflow-y:auto; }
+    body.mobile-hud .stage-wrap{
+      flex:0 0 auto;
+      width:clamp(360px, 100vw, 430px);
+      height:clamp(780px, 100vh, 930px);
+      margin:0 auto;
+    }
+  }
 </style>
 </head>
 
@@ -3198,6 +3216,39 @@
     }
   }
 
+  // Mobile HUD has no right-click, so several things (opening a pin's menu,
+  // the ball's panel, subbing from the bench, editing a drawn shot) were
+  // only reachable through the desktop contextmenu handler. This gives
+  // every one of those a tap equivalent: a plain tap (pointerdown then
+  // pointerup with barely any movement) fires the same callback a desktop
+  // right-click would. It's a fully independent pointerdown/pointerup pair
+  // per element — never touches dragState, ballDragState, or any existing
+  // listener — and only acts while Mobile HUD is on, so desktop behavior
+  // (tap does nothing, right-click opens menus) is completely unchanged.
+  function attachMobileTapMenu(el, onTap){
+    let start = null;
+    el.addEventListener('pointerdown', (e) => {
+      start = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+    });
+    el.addEventListener('pointerup', (e) => {
+      if (!start || e.pointerId !== start.pointerId) return;
+      const dx = e.clientX - start.x, dy = e.clientY - start.y;
+      start = null;
+      if (!document.body.classList.contains('mobile-hud')) return;
+      if (Math.hypot(dx, dy) > 8) return; // moved too far on screen — that was a drag, not a tap
+      // This listener was attached once, up front, so it fires BEFORE any
+      // drag-handling listener the element gets dynamically at pointerdown
+      // time (e.g. a pin's onPinPointerUp, which decides — using its own,
+      // much finer field-percentage threshold — whether this was actually a
+      // move and sets pendingMoves accordingly). Deferring one tick means
+      // onTap's own "is a move/response already pending" checks see that
+      // real decision instead of racing ahead of it — otherwise a held pin
+      // that also nudges a couple of pixels could both pop up its move
+      // confirm/cancel buttons AND open the menu at the same time.
+      setTimeout(() => onTap(e), 0);
+    });
+  }
+
   const field = document.getElementById('field');
   const pinLayer = document.getElementById('pinLayer');
   const shotLayer = document.getElementById('shotLayer');
@@ -4113,6 +4164,13 @@
         openEdit(pin.id, e.clientX, e.clientY);
       }
     });
+    attachMobileTapMenu(seat, (e) => {
+      if (mode === 'play') {
+        openSubPanel(pin.id, e.clientX, e.clientY);
+      } else {
+        openEdit(pin.id, e.clientX, e.clientY);
+      }
+    });
 
     return seat;
   }
@@ -4366,6 +4424,16 @@
           openEdit(pin.id, e.clientX, e.clientY);
         }
       });
+      attachMobileTapMenu(el, (e) => {
+        if (pendingMoves[pin.id]) return;
+        if (pendingChallengeResponse && pendingChallengeResponse.targetId === pin.id) return;
+        if (pendingDribbleOutcome && pendingDribbleOutcome.defenderId === pin.id) return;
+        if (mode === 'play') {
+          openRadialMenu(pin.id, e.clientX, e.clientY);
+        } else {
+          openEdit(pin.id, e.clientX, e.clientY);
+        }
+      });
 
       pinLayer.appendChild(el);
       placed.push({ pin, el });
@@ -4379,6 +4447,13 @@
       ballEl.addEventListener('pointerdown', onBallPointerDown);
       ballEl.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        if (mode === 'play') {
+          openShotPanel(e.clientX, e.clientY);
+        } else {
+          openBallPanel(e.clientX, e.clientY);
+        }
+      });
+      attachMobileTapMenu(ballEl, (e) => {
         if (mode === 'play') {
           openShotPanel(e.clientX, e.clientY);
         } else {
@@ -4534,6 +4609,9 @@
     mainPath.setAttribute('marker-end', 'url(#shotArrow)');
     mainPath.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      openShotEdit(shot, e.clientX, e.clientY);
+    });
+    attachMobileTapMenu(mainPath, (e) => {
       openShotEdit(shot, e.clientX, e.clientY);
     });
     g.appendChild(mainPath);
