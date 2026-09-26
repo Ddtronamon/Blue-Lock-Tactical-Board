@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Blue Lock: Egoist Reborn.</title>
 <style>
   :root{
@@ -2102,6 +2105,30 @@
   }
   .rotate-prompt h2{ margin:0; font-size:20px; }
   .rotate-prompt p{ margin:0; color:var(--muted); font-size:14px; max-width:280px; }
+
+  /* Fullscreen toggle for Mobile HUD — sits as a sibling of .app (not
+     inside it), so it stays a fixed, comfortably-tappable real size and
+     never shrinks along with the scaled-down board. Only shown once the
+     board itself is visible (mobile-hud + landscape); portrait shows the
+     rotate prompt instead, so this stays hidden there. */
+  .mobile-fullscreen-btn{ display:none; }
+  body.mobile-hud .mobile-fullscreen-btn{
+    display:flex; align-items:center; justify-content:center;
+    position:fixed;
+    top:max(10px, env(safe-area-inset-top));
+    right:max(10px, env(safe-area-inset-right));
+    width:38px; height:38px;
+    border-radius:50%;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    font-size:16px;
+    z-index:510;
+    cursor:pointer;
+  }
+  @media (orientation: portrait){
+    body.mobile-hud .mobile-fullscreen-btn{ display:none; }
+  }
 </style>
 </head>
 
@@ -2111,6 +2138,7 @@
   <h2>Rotate Your Phone</h2>
   <p>Mobile HUD plays best in landscape. Turn your phone sideways to see the full pitch and use the board.</p>
 </div>
+<button class="mobile-fullscreen-btn" id="mobileFullscreenBtn" type="button" title="Fullscreen (hides the browser's address bar)">&#10021;</button>
 <div class="app">
 
   <header>
@@ -7412,8 +7440,13 @@
     }
     const naturalW = app.scrollWidth;
     const naturalH = app.scrollHeight;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    // visualViewport reflects the actual visible area net of the browser's
+    // own address bar / nav chrome more reliably than innerWidth/innerHeight
+    // on mobile, so prefer it when available (e.g. after that chrome shows,
+    // hides, or fullscreen is entered/exited).
+    const vv = window.visualViewport;
+    const vw = vv ? vv.width : window.innerWidth;
+    const vh = vv ? vv.height : window.innerHeight;
     let scale = Math.min(vw / naturalW, vh / naturalH, 1);
     if (!isFinite(scale) || scale <= 0) scale = 1;
     app.style.setProperty('--mob-scale', scale.toFixed(4));
@@ -7431,6 +7464,88 @@
   window.addEventListener('orientationchange', () => {
     if (document.body.classList.contains('mobile-hud')) scheduleMobileScale();
   });
+  // Mobile browsers show/hide their own address bar as you scroll, which
+  // changes the real usable height without always firing a plain resize —
+  // visualViewport catches that so the board rescales as that chrome
+  // appears/disappears (and after entering/exiting fullscreen below).
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      if (document.body.classList.contains('mobile-hud')) scheduleMobileScale();
+    });
+  }
+
+  // A small local-only toast for browser-capability notices (e.g. fullscreen
+  // unsupported). Deliberately NOT showToast()/logEvent() — those write into
+  // the shared activity log and call markDirty(), syncing to every peer in
+  // the room, which a local "your browser doesn't support X" tip must not do.
+  function showLocalToast(msg){
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 250);
+    }, 3600);
+  }
+
+  // Fullscreen toggle for Mobile HUD — hides the browser's own address bar
+  // and nav chrome so the board gets the full real screen height instead of
+  // losing a chunk of it to browser UI. Falls back to a tip about "Add to
+  // Home Screen" where the Fullscreen API isn't available (notably iPhone
+  // Safari, which doesn't support requestFullscreen on arbitrary pages).
+  const mobileFullscreenBtn = document.getElementById('mobileFullscreenBtn');
+  function getFullscreenElement(){
+    return document.fullscreenElement || document.webkitFullscreenElement ||
+      document.mozFullScreenElement || document.msFullscreenElement || null;
+  }
+  function requestElementFullscreen(el){
+    const fn = el.requestFullscreen || el.webkitRequestFullscreen ||
+      el.mozRequestFullScreen || el.msRequestFullscreen;
+    if (!fn) return null;
+    return fn.call(el);
+  }
+  function exitDocumentFullscreen(){
+    const fn = document.exitFullscreen || document.webkitExitFullscreen ||
+      document.mozCancelFullScreen || document.msExitFullscreen;
+    if (!fn) return null;
+    return fn.call(document);
+  }
+  function updateFullscreenBtn(){
+    if (!mobileFullscreenBtn) return;
+    const active = !!getFullscreenElement();
+    mobileFullscreenBtn.textContent = active ? '✖' : '✡';
+    mobileFullscreenBtn.title = active ? 'Exit fullscreen' : 'Fullscreen (hides the browser\'s address bar)';
+  }
+  if (mobileFullscreenBtn) {
+    mobileFullscreenBtn.addEventListener('click', () => {
+      const supported = !!(document.documentElement.requestFullscreen ||
+        document.documentElement.webkitRequestFullscreen ||
+        document.documentElement.mozRequestFullScreen ||
+        document.documentElement.msRequestFullscreen);
+      if (!supported) {
+        showLocalToast('This browser can’t go fullscreen. On iPhone: Share → Add to Home Screen for a full-screen, app-like view instead.');
+        return;
+      }
+      if (getFullscreenElement()) {
+        exitDocumentFullscreen();
+      } else {
+        const p = requestElementFullscreen(document.documentElement);
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {
+            showLocalToast('Fullscreen was blocked by the browser. On iPhone: Share → Add to Home Screen instead.');
+          });
+        }
+      }
+    });
+    ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'].forEach((evt) => {
+      document.addEventListener(evt, () => {
+        updateFullscreenBtn();
+        scheduleMobileScale();
+      });
+    });
+  }
 
   function setMobileHud(on){
     document.body.classList.toggle('mobile-hud', on);
