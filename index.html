@@ -1974,6 +1974,19 @@
   body.mobile-hud header{ padding-bottom:2px; }
   body.mobile-hud .app{ gap:8px; }
 
+  /* Scale the whole HUD (board + floating buttons together) down as one unit
+     so it fits the real screen instead of clipping/overlapping. JS computes
+     --mob-scale from the HUD's natural size vs the actual viewport. Fixed-
+     position children (like the FABs) are contained by this transformed
+     box too, so they shrink and stay put relative to it instead of the
+     raw viewport. Desktop (no .mobile-hud class) is completely untouched. */
+  body.mobile-hud .app{
+    position:absolute;
+    left:50%; top:50%;
+    transform:translate(-50%,-50%) scale(var(--mob-scale, 1));
+    transform-origin:center center;
+  }
+
   /* Roster (palette) and Bench become bottom sheets, opened via FABs */
   .sheet-backdrop{
     position:fixed; inset:0;
@@ -2017,9 +2030,12 @@
     box-shadow:0 -12px 30px rgba(0,0,0,.5);
   }
 
-  /* Bigger touch targets across the board on mobile */
-  body.mobile-hud .pin{ min-width:34px !important; min-height:34px !important; }
-  body.mobile-hud .ball-token{ min-width:24px !important; min-height:24px !important; }
+  /* Pins/ball keep their normal cqw-relative sizing (same formula as desktop)
+     on mobile now, so they shrink/grow in proportion to the field as a whole
+     board is scaled to fit the screen — a flat px floor here would fight
+     that uniform scaling and make them look oversized on a shrunk field.
+     Off-field touch targets (buttons) can stay bigger since those aren't
+     part of the scaled board. */
   body.mobile-hud .token-btn{ width:42px; height:42px; font-size:15px; }
   body.mobile-hud .mode-btn{ padding:9px 18px; font-size:13px; }
   body.mobile-hud .edit-panel{ font-size:13px; }
@@ -2052,27 +2068,49 @@
     font-size:13px;
   }
 
-  /* Mobile HUD in portrait: give the field its own phone-shaped stage
-     (roughly real phone viewport dimensions) instead of the small landscape
-     strip the normal aspect-ratio math produces on a tall screen. This only
-     resizes .stage-wrap — the field's own box (and everything pin math is
-     based on) keeps its real 1240:700 proportions and just letterboxes
-     (centers, with empty space above/below) inside that taller stage. Scoped
-     to body.mobile-hud + portrait, so desktop and landscape-mobile are both
-     completely untouched. */
+  /* Mobile HUD in portrait: the pitch is drawn landscape (1240:700), and
+     trying to force it into a tall portrait box (an earlier attempt) made
+     everything overlap and broke tapping. Simplest reliable fix: don't try
+     to cram a landscape pitch into a portrait screen at all — show a
+     full-screen "rotate your phone" prompt instead, and only render the
+     actual board once the phone is in landscape, where the pitch fits
+     naturally at a real, tappable size. Scoped to body.mobile-hud +
+     portrait, so desktop and landscape-mobile are both untouched. */
+  .rotate-prompt{ display:none; }
   @media (orientation: portrait){
-    body.mobile-hud .app{ overflow-y:auto; }
-    body.mobile-hud .stage-wrap{
-      flex:0 0 auto;
-      width:clamp(360px, 100vw, 430px);
-      height:clamp(780px, 100vh, 930px);
-      margin:0 auto;
+    body.mobile-hud .app{ display:none; }
+    body.mobile-hud .rotate-prompt{
+      display:flex;
+      position:fixed; inset:0;
+      z-index:500;
+      flex-direction:column;
+      align-items:center; justify-content:center;
+      gap:16px;
+      padding:32px;
+      text-align:center;
+      background:var(--bg);
     }
   }
+  .rotate-prompt-icon{
+    font-size:56px;
+    animation:rotatePromptSpin 2.2s ease-in-out infinite;
+  }
+  @keyframes rotatePromptSpin{
+    0%, 15%{ transform:rotate(0deg); }
+    50%, 65%{ transform:rotate(-90deg); }
+    100%{ transform:rotate(-90deg); }
+  }
+  .rotate-prompt h2{ margin:0; font-size:20px; }
+  .rotate-prompt p{ margin:0; color:var(--muted); font-size:14px; max-width:280px; }
 </style>
 </head>
 
 <body>
+<div class="rotate-prompt">
+  <div class="rotate-prompt-icon">📱</div>
+  <h2>Rotate Your Phone</h2>
+  <p>Mobile HUD plays best in landscape. Turn your phone sideways to see the full pitch and use the board.</p>
+</div>
 <div class="app">
 
   <header>
@@ -7358,11 +7396,48 @@
     sheetBackdrop.classList.add('hidden');
   }
 
+  // Scales the whole .app box (board, HUD chrome, floating FABs — everything
+  // inside it) down as one uniform unit so it actually fits the real screen
+  // on Mobile HUD, instead of clipping the field or overlapping the FABs.
+  // scrollWidth/scrollHeight read the true natural size even though .app
+  // has overflow:hidden, and are unaffected by the transform itself, so
+  // this is safe to recompute at any time without a measure-reset dance.
+  let mobileScaleRaf = null;
+  function applyMobileScale(){
+    const app = document.querySelector('.app');
+    if (!app) return;
+    if (!document.body.classList.contains('mobile-hud')) {
+      app.style.removeProperty('--mob-scale');
+      return;
+    }
+    const naturalW = app.scrollWidth;
+    const naturalH = app.scrollHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let scale = Math.min(vw / naturalW, vh / naturalH, 1);
+    if (!isFinite(scale) || scale <= 0) scale = 1;
+    app.style.setProperty('--mob-scale', scale.toFixed(4));
+  }
+  function scheduleMobileScale(){
+    if (mobileScaleRaf) cancelAnimationFrame(mobileScaleRaf);
+    mobileScaleRaf = requestAnimationFrame(() => {
+      mobileScaleRaf = null;
+      applyMobileScale();
+    });
+  }
+  window.addEventListener('resize', () => {
+    if (document.body.classList.contains('mobile-hud')) scheduleMobileScale();
+  });
+  window.addEventListener('orientationchange', () => {
+    if (document.body.classList.contains('mobile-hud')) scheduleMobileScale();
+  });
+
   function setMobileHud(on){
     document.body.classList.toggle('mobile-hud', on);
     mobileHudBtn.classList.toggle('active', on);
     mobileHudBtn.textContent = on ? 'Desktop HUD' : 'Mobile HUD';
     closeAllSheets();
+    scheduleMobileScale();
   }
 
   mobileHudBtn.addEventListener('click', () => {
