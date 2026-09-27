@@ -10014,6 +10014,20 @@
   }
 
   let saveCooldownUntil = 0; // after a failure, automatic saves back off until this timestamp
+  // Normal (non-failure) floor between successful saves — this is the actual
+  // broadcast throttle. Every save is a full-state broadcast fanned out by
+  // the host to every other guest (star topology, see broadcastToGuests),
+  // so with a big room (7-8+ people) all interacting at once, letting saves
+  // fire on literally the next 250ms tick after every single change means
+  // the host can end up relaying several full-state pushes per second to
+  // everyone, which is what was overwhelming the host's connection and
+  // causing the lag/disconnect cascade. This doesn't shrink what's sent,
+  // just how often — coalescing rapid-fire local changes into fewer, still
+  // prompt, broadcasts. 600ms keeps it feeling responsive for a tabletop
+  // board (nothing here needs sub-second precision) while cutting the peak
+  // broadcast rate from up to ~4/sec down to under ~1.7/sec per active
+  // client. Approved by the user specifically as the fix to try first.
+  const SAVE_THROTTLE_MS = 600;
 
   // ---- Per-pin merge: the actual fix for "someone else's move reverts mine" ----
   // Whole-board last-write-wins meant two people editing DIFFERENT pins around the
@@ -10255,7 +10269,7 @@
       applyingRemote = false;
       localVersion = version;
       localDirty = false;
-      saveCooldownUntil = 0;
+      saveCooldownUntil = Date.now() + SAVE_THROTTLE_MS; // throttle floor, not a failure backoff — see SAVE_THROTTLE_MS
       return true;
     } catch (err) {
       // Back off automatic retries for a while rather than hammering a storage
