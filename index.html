@@ -1401,6 +1401,11 @@
   /* ---- Conference / presence ---- */
   .mode-toggle-stack{ display:flex; flex-direction:column; gap:5px; align-items:flex-start; }
   .presence-balls{ display:flex; gap:4px; min-height:20px; }
+  .conn-status-dot{ width:10px; height:10px; border-radius:50%; margin-top:4px; background:#F2C230; }
+  .conn-status-dot.hidden{ display:none; }
+  .conn-status-dot.reconnecting{ background:#F2C230; animation: connStatusPulse 1s ease-in-out infinite; }
+  .conn-status-dot.disconnected{ background:#D32F2F; }
+  @keyframes connStatusPulse{ 0%,100%{ opacity:1; } 50%{ opacity:.35; } }
   .presence-ball{
     width:20px; height:20px;
     border-radius:50%;
@@ -2216,6 +2221,7 @@
     <div class="header-actions">
       <div class="mode-toggle-stack">
         <div class="presence-balls" id="presenceBalls"></div>
+        <div class="conn-status-dot hidden" id="connStatusDot" title="Connection status"></div>
         <div class="mode-toggle" id="modeToggle" title="Your own view only \u2014 switching modes doesn't affect anyone else's screen">
           <span class="mode-label">GM</span>
           <button class="mode-btn active" id="modeEditBtn" data-mode="edit">Edit</button>
@@ -3186,6 +3192,18 @@
   let localStore = {};     // "shared" (room) keys -> value, kept fresh by incoming peer messages
   let personalStore = {};  // "personal" keys -> value — purely local, never sent over the wire
 
+  // Reconnection state — added because a dropped WebRTC connection (a phone
+  // switching from wifi to cellular, a laptop lid closing briefly, plain
+  // network flakiness) used to be permanent: the old code just nulled out
+  // hostConn/guestConns on 'close' with no retry, so anyone who dropped had
+  // to manually leave and rejoin. These four variables track enough state
+  // to retry automatically without the user re-entering the room code.
+  let currentRoomCode = null;    // remembered so a retry doesn't need the user to type it again
+  let intentionallyLeft = false; // true only once __peerLeaveRoom runs — stops all pending/future retries
+  let reconnectTimer = null;     // the single in-flight backoff timer, if any
+  let reconnectAttempts = 0;     // drives the backoff delay; reset to 0 on every successful (re)connect
+  let pendingJoinSettle = null;  // {resolve,reject} for the *initial* __peerJoinRoom call only, while it's still unsettled
+
   function broadcastToGuests(key, value, excludeId){
     Object.keys(guestConns).forEach(id => {
       if (id === excludeId) return;
@@ -3259,6 +3277,8 @@
 
   // ---- Host / Join lifecycle, called by the existing Conference UI ----
   function teardownPeerConnection(){
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    pendingJoinSettle = null;
     if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
     isHost = false;
     hostConn = null;
@@ -3266,71 +3286,163 @@
     localStore = {};
   }
 
+  // Shared by the initial host setup AND by a full peer recreate after the
+  // host's own Peer object was destroyed outright (rare — normally just
+  // 'disconnected', handled by peer.reconnect() below, covers it).
+  function wireHostPeer(p){
+    p.on('disconnected', () => { if (!intentionallyLeft) scheduleReconnect(); });
+    p.on('close', () => { if (!intentionallyLeft) scheduleReconnect(); });
+    p.on('connection', (conn) => {
+      guestConns[conn.peer] = conn;
+      conn.on('open', () => {
+        // catch the newly-joined (or reconnecting) guest up on everything we
+        // currently know, then explicitly tell them they're caught up — this
+        // is also exactly what a guest who dropped and reconnected needs, so
+        // no separate "resync" path is needed for that case.
+        Object.entries(localStore).forEach(([key, value]) => {
+          conn.send({ type: 'kv', key, value });
+        });
+        conn.send({ type: 'sync-complete' });
+      });
+      wireConnection(conn, true);
+      conn.on('close', () => { delete guestConns[conn.peer]; });
+    });
+  }
+  function createHostPeer(){
+    const p = new Peer(PEER_PREFIX + currentRoomCode);
+    wireHostPeer(p);
+    return p;
+  }
+
+  // Shared by the initial join AND by every reconnect attempt — connectToHost
+  // is intentionally idempotent (no-ops if already connected/mid-connect-less
+  // relevant here since it's only ever called when we know we're not) so it's
+  // safe to call from more than one trigger without risking a duplicate
+  // connection.
+  function connectToHost(){
+    if (isHost || intentionallyLeft || !currentRoomCode) return;
+    if (hostConn && hostConn.open) return;
+    if (!peer || peer.destroyed) return; // attemptReconnect() recreates the peer first in that case
+    hostConn = peer.connect(PEER_PREFIX + currentRoomCode, { reliable: true });
+    wireConnection(hostConn, false); // handles ongoing 'kv' updates
+    hostConn.on('data', (msg) => {
+      // resolve the *initial* join only once the host confirms we're fully
+      // caught up, not just once the raw connection opens — avoids a race
+      // where we'd call loadState() before the host's initial data arrived.
+      // On a reconnect there's nothing pending to resolve, so this just marks
+      // us healthy again.
+      if (msg && msg.type === 'sync-complete') {
+        reconnectAttempts = 0;
+        window.__onPeerConnectionStatus && window.__onPeerConnectionStatus('connected');
+        if (pendingJoinSettle) { pendingJoinSettle.resolve(true); pendingJoinSettle = null; }
+      }
+    });
+    hostConn.on('error', (err) => {
+      hostConn = null;
+      if (pendingJoinSettle) { pendingJoinSettle.reject(err); pendingJoinSettle = null; return; }
+      scheduleReconnect();
+    });
+    hostConn.on('close', () => {
+      hostConn = null;
+      // if the initial join hasn't settled yet, its own 8s timeout handles
+      // the failure — don't also start a retry loop for a join that never
+      // succeeded in the first place.
+      if (!pendingJoinSettle) scheduleReconnect();
+    });
+  }
+  function wireGuestPeer(p){
+    p.on('disconnected', () => { if (!intentionallyLeft) scheduleReconnect(); });
+    p.on('close', () => { if (!intentionallyLeft) scheduleReconnect(); });
+  }
+  function createGuestPeer(){
+    const p = new Peer();
+    wireGuestPeer(p);
+    p.on('open', () => connectToHost());
+    return p;
+  }
+
+  // Backoff retry loop — triggered by a dropped hostConn, a dropped guest
+  // connection to the signaling server ('disconnected'), or the whole Peer
+  // object being torn down ('close'). Capped at 15s between attempts and
+  // runs indefinitely until it succeeds or the user explicitly leaves, since
+  // there's no way to tell "briefly flaky wifi" apart from "gone for good"
+  // except by trying.
+  function scheduleReconnect(){
+    if (intentionallyLeft || !currentRoomCode || reconnectTimer) return;
+    reconnectAttempts++;
+    window.__onPeerConnectionStatus && window.__onPeerConnectionStatus('reconnecting');
+    const delay = Math.min(1500 * Math.pow(1.7, reconnectAttempts - 1), 15000);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      attemptReconnect();
+    }, delay);
+  }
+  function attemptReconnect(){
+    if (intentionallyLeft || !currentRoomCode) return;
+    if (isHost) {
+      if (!peer || peer.destroyed) { peer = createHostPeer(); return; }
+      if (peer.disconnected) peer.reconnect();
+      // else: our signaling connection is fine — any guest who dropped
+      // reconnects from their own side and shows up in wireHostPeer's
+      // 'connection' handler again, same as a fresh join.
+      return;
+    }
+    if (!peer || peer.destroyed) { peer = createGuestPeer(); return; }
+    if (peer.disconnected) { peer.reconnect(); return; } // its 'open' handler (in createGuestPeer) calls connectToHost() again
+    connectToHost();
+  }
+
   window.__peerHostRoom = function(roomCode){
     teardownPeerConnection(); // in case we were already hosting or joined to something else
+    intentionallyLeft = false;
+    currentRoomCode = roomCode;
+    reconnectAttempts = 0;
     return new Promise((resolve, reject) => {
       isHost = true;
-      peer = new Peer(PEER_PREFIX + roomCode);
-      peer.on('open', () => resolve(true));
-      peer.on('error', (err) => reject(err));
-      peer.on('connection', (conn) => {
-        guestConns[conn.peer] = conn;
-        conn.on('open', () => {
-          // catch the newly-joined guest up on everything we currently know,
-          // then explicitly tell them they're caught up
-          Object.entries(localStore).forEach(([key, value]) => {
-            conn.send({ type: 'kv', key, value });
-          });
-          conn.send({ type: 'sync-complete' });
-        });
-        wireConnection(conn, true);
-        conn.on('close', () => { delete guestConns[conn.peer]; });
+      peer = createHostPeer();
+      peer.on('open', () => {
+        window.__onPeerConnectionStatus && window.__onPeerConnectionStatus('connected');
+        resolve(true);
       });
+      peer.on('error', (err) => reject(err));
     });
   };
 
   window.__peerJoinRoom = function(roomCode){
     teardownPeerConnection(); // in case we were already hosting or joined to something else
+    intentionallyLeft = false;
+    currentRoomCode = roomCode;
+    reconnectAttempts = 0;
     return new Promise((resolve, reject) => {
       let settled = false;
+      let timeout;
       isHost = false;
-      peer = new Peer();
-      const timeout = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        reject(new Error('Connection timed out — check the room code, and make sure the host still has the board open.'));
-      }, 8000);
-      peer.on('open', () => {
-        hostConn = peer.connect(PEER_PREFIX + roomCode, { reliable: true });
-        wireConnection(hostConn, false); // handles ongoing 'kv' updates
-        hostConn.on('data', (msg) => {
-          // resolve only once the host confirms we're fully caught up, not
-          // just once the raw connection opens — avoids a race where we'd
-          // call loadState() before the host's initial data has arrived
-          if (msg && msg.type === 'sync-complete' && !settled) {
-            settled = true;
-            clearTimeout(timeout);
-            resolve(true);
-          }
-        });
-        hostConn.on('error', (err) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeout);
-          reject(err);
-        });
-        hostConn.on('close', () => { hostConn = null; });
-      });
-      peer.on('error', (err) => {
+      const settledResolve = (v) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        reject(err);
-      });
+        pendingJoinSettle = null;
+        resolve(v);
+      };
+      const settledReject = (e) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        pendingJoinSettle = null;
+        reject(e);
+      };
+      pendingJoinSettle = { resolve: settledResolve, reject: settledReject };
+      timeout = setTimeout(() => {
+        settledReject(new Error('Connection timed out — check the room code, and make sure the host still has the board open.'));
+      }, 8000);
+      peer = createGuestPeer();
+      peer.on('error', (err) => settledReject(err));
     });
   };
 
   window.__peerLeaveRoom = function(){
+    intentionallyLeft = true;
+    currentRoomCode = null;
     teardownPeerConnection();
   };
 })();
@@ -7787,6 +7899,7 @@
 
   function deleteTeam(id){
     teams = teams.filter(t => t.id !== id);
+    if (!deletedTeamIds.includes(id)) deletedTeamIds.push(id); // tombstone — see mergeById()
     renderTeams();
   }
 
@@ -7956,6 +8069,15 @@
   let saveIdSeq = 1;
   let deletedPinIds = []; // tombstones — pin IDs explicitly deleted, so the merge never resurrects them
   let deletedShotIds = []; // same idea, for shot markers — without this, a deleted shot on a slower/laggier peer's screen can resurrect it for everyone
+  // Same tombstone idea for Team Stats / board Saves / Character Library /
+  // Saved Teams — these used to be synced by just overwriting the whole
+  // shared list with whichever device saved last, which silently deleted
+  // anything another player had added in the meantime. See mergeById() and
+  // its use in saveSetupStateIfChanged()/applyLoadedState().
+  let deletedTeamIds = [];
+  let deletedSaveIds = [];
+  let deletedCharacterIds = [];
+  let deletedSavedTeamIds = [];
 
   // Logical clock: real-world device clocks can disagree by a second or more,
   // which would otherwise let an actually-older move "win" a conflict just
@@ -8026,6 +8148,7 @@
     delBtn.textContent = 'Delete';
     delBtn.addEventListener('click', () => {
       saves = saves.filter(s => s.id !== save.id);
+      if (!deletedSaveIds.includes(save.id)) deletedSaveIds.push(save.id); // tombstone — see mergeById()
       renderSaves();
     });
 
@@ -8241,6 +8364,7 @@
       delBtn.className = 'delete-btn'; delBtn.type = 'button'; delBtn.textContent = 'Delete';
       delBtn.addEventListener('click', () => {
         characters = characters.filter(c => c.id !== ch.id);
+        if (!deletedCharacterIds.includes(ch.id)) deletedCharacterIds.push(ch.id); // tombstone — see mergeById()
         markDirty();
         renderCharacterList();
         refreshLoadCharacterDropdown();
@@ -9300,6 +9424,7 @@
       delBtn.className = 'delete-btn'; delBtn.type = 'button'; delBtn.textContent = 'Delete';
       delBtn.addEventListener('click', () => {
         savedTeams = savedTeams.filter(t => t.id !== team.id);
+        if (!deletedSavedTeamIds.includes(team.id)) deletedSavedTeamIds.push(team.id); // tombstone — see mergeById()
         markDirty();
         renderTeamCreatorList();
       });
@@ -9531,6 +9656,14 @@
     // which view any individual person's own browser happens to be showing.
     if (hasStartedPlay && newValue > maxChunkReached) {
       maxChunkReached = newValue;
+      // Bug fix: this used to only run from the chunk +/- button's own click
+      // handler, so a chunk advance made by typing a number directly into
+      // the chunk field (instead of clicking +) never ticked dash cooldowns
+      // down at all — a pin's "Recharges in N chunks" could sit frozen
+      // regardless of how much the match actually progressed. Ticking it
+      // here instead means it fires exactly once per genuinely-new chunk
+      // reached, however that advance happened.
+      tickDashCooldowns();
       resetRound();
       snapshotCurrentChunk(newValue); // this chunk's baseline, right after the fresh refill
     } else if (hasStartedPlay) {
@@ -9545,15 +9678,14 @@
     btn.addEventListener('click', () => {
       const delta = Number(btn.dataset.delta);
       const newValue = clampInt(Number(chunkValue.value) + delta, 0, 999);
+      handleChunkChange(newValue); // ticks dash cooldowns itself now, exactly once per genuine new chunk — see its high-water-mark branch
       if (delta > 0) {
-        tickDashCooldowns();
         const activePin = pins.find(p => p.id === activePinId);
         if (activePin && !playPanel.classList.contains('hidden')) {
           refreshDashDisplay(activePin);
           refreshFlowTab(activePin);
         }
       }
-      handleChunkChange(newValue);
     });
   });
   chunkValue.addEventListener('change', () => {
@@ -9605,6 +9737,26 @@
   const roomCodeDisplay = document.getElementById('roomCodeDisplay');
   const presenceList = document.getElementById('presenceList');
   const presenceBalls = document.getElementById('presenceBalls');
+  const connStatusDot = document.getElementById('connStatusDot');
+
+  // Called by the PeerJS sync block above whenever the connection to the
+  // room drops and it's retrying, or recovers. 'connected' is the normal
+  // steady state (dot hidden); 'reconnecting' means a drop is being retried
+  // automatically — no action needed, just visibility into what's happening
+  // instead of the board silently going stale.
+  let lastConnStatus = 'connected';
+  window.__onPeerConnectionStatus = function(status){
+    if (connStatusDot) {
+      connStatusDot.classList.toggle('hidden', status === 'connected');
+      connStatusDot.classList.toggle('reconnecting', status === 'reconnecting');
+      connStatusDot.classList.toggle('disconnected', status === 'disconnected');
+    }
+    if (status !== lastConnStatus) {
+      if (status === 'reconnecting') showLocalToast('Connection lost — reconnecting…');
+      else if (status === 'connected' && lastConnStatus === 'reconnecting') showLocalToast('Reconnected.');
+      lastConnStatus = status;
+    }
+  };
 
   function renderPresenceBalls(){
     presenceBalls.innerHTML = '';
@@ -9994,6 +10146,8 @@
     localDirty = false;
     presenceMap = {};
     renderPresenceBalls();
+    lastConnStatus = 'connected';
+    if (connStatusDot) connStatusDot.classList.add('hidden');
     await saveMyIdentity();
     const restored = await loadState();
     if (!restored) addPin('#1e8fff', '1');
@@ -10134,6 +10288,30 @@
       const ls = merged[rs.id];
       if (!ls) { merged[rs.id] = rs; return; }
       if ((rs.updatedAt || 0) > (ls.updatedAt || 0)) merged[rs.id] = rs;
+    });
+    return Object.values(merged);
+  }
+
+  // Generic id-keyed union merge for Team Stats / board Saves / Character
+  // Library / Saved Teams. Unlike pins/shots, these items don't carry a
+  // per-item updatedAt, so a genuine same-id edit-on-both-sides conflict
+  // just keeps whichever copy is already in localList (the side calling
+  // this asserts its own edits) — but an id that exists on only ONE side
+  // is always kept, which is the actual bug fix: previously the whole list
+  // was just overwritten wholesale, silently deleting anything the other
+  // side had that this side didn't know about yet. remoteDeletedIds/
+  // localDeletedIds are tombstone arrays (same idea as deletedPinIds) so a
+  // real deletion isn't undone by the very next union.
+  function mergeById(localList, remoteList, remoteDeletedIds, localDeletedIds){
+    if (remoteDeletedIds && remoteDeletedIds.length) {
+      remoteDeletedIds.forEach(id => { if (!localDeletedIds.includes(id)) localDeletedIds.push(id); });
+    }
+    const deletedSet = new Set(localDeletedIds);
+    const merged = {};
+    (localList || []).forEach(item => { if (item && !deletedSet.has(item.id)) merged[item.id] = item; });
+    (remoteList || []).forEach(item => {
+      if (!item || deletedSet.has(item.id)) return;
+      if (!(item.id in merged)) merged[item.id] = item; // only exists remotely — adopt it
     });
     return Object.values(merged);
   }
@@ -10293,19 +10471,52 @@
 
   // LOCKED — see the master sync-system lock banner at the top of the
   // PeerJS script block. Do not modify without asking first.
+  function setupPayloadString(){
+    return JSON.stringify({
+      teams, teamIdSeq, saves, saveIdSeq, characters, characterIdSeq, savedTeams, savedTeamIdSeq,
+      deletedTeamIds, deletedSaveIds, deletedCharacterIds, deletedSavedTeamIds
+    });
+  }
+
   async function saveSetupStateIfChanged(){
     if (!window.storage) return;
-    let payload = JSON.stringify({ teams, teamIdSeq, saves, saveIdSeq, characters, characterIdSeq, savedTeams, savedTeamIdSeq });
-    if (payload === lastSavedSetupPayload) return; // nothing setup-related changed — this is the whole point of splitting it out
-    if (payload.length > 4_800_000) {
-      // too close to the 5MB per-key limit — trim the oldest saved sheets rather than fail outright
-      while (saves.length > 1 && JSON.stringify({ teams, teamIdSeq, saves, saveIdSeq, characters, characterIdSeq, savedTeams, savedTeamIdSeq }).length > 4_800_000) {
-        saves.shift();
-      }
-      renderSaves();
-      payload = JSON.stringify({ teams, teamIdSeq, saves, saveIdSeq, characters, characterIdSeq, savedTeams, savedTeamIdSeq });
-    }
+    if (setupPayloadString() === lastSavedSetupPayload) return; // nothing setup-related changed locally — this is the whole point of splitting it out
     try {
+      // Bug fix: this used to just overwrite the shared setup key with
+      // whatever this device's local teams/saves/characters/savedTeams
+      // arrays happened to be — so if another player had added a Save (or
+      // a Team, or a Character) that hadn't reached this device yet, this
+      // write would silently wipe it from everyone's view. Fetch what's
+      // actually there first and union-merge into it (same approach as
+      // pins/shots), so an item either side has is never dropped just
+      // because the OTHER side didn't happen to know about it yet.
+      let remoteSetup = null;
+      try {
+        const existing = await window.storage.get(setupKey(), !!conferenceRoom);
+        if (existing && existing.value) remoteSetup = JSON.parse(existing.value);
+      } catch (e) { /* no existing remote setup yet — nothing to merge with */ }
+
+      if (remoteSetup) {
+        teams = mergeById(teams, remoteSetup.teams, remoteSetup.deletedTeamIds, deletedTeamIds);
+        saves = mergeById(saves, remoteSetup.saves, remoteSetup.deletedSaveIds, deletedSaveIds);
+        characters = mergeById(characters, remoteSetup.characters, remoteSetup.deletedCharacterIds, deletedCharacterIds);
+        savedTeams = mergeById(savedTeams, remoteSetup.savedTeams, remoteSetup.deletedSavedTeamIds, deletedSavedTeamIds);
+        teamIdSeq = Math.max(teamIdSeq, remoteSetup.teamIdSeq || 0);
+        saveIdSeq = Math.max(saveIdSeq, remoteSetup.saveIdSeq || 0);
+        characterIdSeq = Math.max(characterIdSeq, remoteSetup.characterIdSeq || 0);
+        savedTeamIdSeq = Math.max(savedTeamIdSeq, remoteSetup.savedTeamIdSeq || 0);
+      }
+
+      let payload = setupPayloadString();
+      if (payload.length > 4_800_000) {
+        // too close to the 5MB per-key limit — trim the oldest saved sheets rather than fail outright
+        while (saves.length > 1 && payload.length > 4_800_000) {
+          saves.shift();
+          payload = setupPayloadString();
+        }
+        renderSaves();
+      }
+
       let lastErr = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -10363,7 +10574,18 @@
     }
     mergeMaxChunk(state.maxChunkReached, state.maxChunkResetAt);
     if (state.chunkSnapshots) chunkSnapshots = state.chunkSnapshots;
-    if (state.chunkValue !== undefined) chunkValue.value = state.chunkValue;
+    if (state.chunkValue !== undefined) {
+      chunkValue.value = state.chunkValue;
+      // Bug fix: handleChunkChange()'s +/- guard compares against
+      // lastKnownChunkValue to detect "did anything actually change". A
+      // remote update landing here used to write chunkValue.value directly
+      // without ever touching lastKnownChunkValue, so the two could drift
+      // apart — and the next local +/- click could compute a newValue that
+      // happened to equal the now-stale lastKnownChunkValue, silently
+      // no-op, and stay stuck that way on every click after. Keeping this
+      // in lockstep with every remote-driven change closes that gap.
+      lastKnownChunkValue = Number(state.chunkValue) || lastKnownChunkValue;
+    }
     if (state.scoreA !== undefined) scoreA.value = state.scoreA;
     if (state.scoreB !== undefined) scoreB.value = state.scoreB;
     if (state.teamAName !== undefined) teamAName.value = state.teamAName;
@@ -10372,14 +10594,20 @@
       document.getElementById('greyZoneColor').value = state.greyZoneColor;
       document.getElementById('greyZone').setAttribute('fill', state.greyZoneColor);
     }
-    if (Array.isArray(state.teams)) teams = state.teams;
-    if (typeof state.teamIdSeq === 'number') teamIdSeq = state.teamIdSeq;
-    if (Array.isArray(state.saves)) saves = state.saves;
-    if (typeof state.saveIdSeq === 'number') saveIdSeq = state.saveIdSeq;
-    if (Array.isArray(state.characters)) characters = state.characters;
-    if (typeof state.characterIdSeq === 'number') characterIdSeq = state.characterIdSeq;
-    if (Array.isArray(state.savedTeams)) savedTeams = state.savedTeams;
-    if (typeof state.savedTeamIdSeq === 'number') savedTeamIdSeq = state.savedTeamIdSeq;
+    // Bug fix: these used to be a blind wholesale overwrite (teams =
+    // state.teams, etc.) — which meant simply RECEIVING someone else's
+    // setup save could erase a Team/Save/Character/Saved-Team this device
+    // had added locally that hadn't made it into their copy yet. Union-
+    // merge by id instead, same tombstone-respecting approach as pins/
+    // shots, so an item known to only one side survives either direction.
+    if (Array.isArray(state.teams)) teams = mergeById(teams, state.teams, state.deletedTeamIds, deletedTeamIds);
+    if (typeof state.teamIdSeq === 'number') teamIdSeq = Math.max(teamIdSeq, state.teamIdSeq);
+    if (Array.isArray(state.saves)) saves = mergeById(saves, state.saves, state.deletedSaveIds, deletedSaveIds);
+    if (typeof state.saveIdSeq === 'number') saveIdSeq = Math.max(saveIdSeq, state.saveIdSeq);
+    if (Array.isArray(state.characters)) characters = mergeById(characters, state.characters, state.deletedCharacterIds, deletedCharacterIds);
+    if (typeof state.characterIdSeq === 'number') characterIdSeq = Math.max(characterIdSeq, state.characterIdSeq);
+    if (Array.isArray(state.savedTeams)) savedTeams = mergeById(savedTeams, state.savedTeams, state.deletedSavedTeamIds, deletedSavedTeamIds);
+    if (typeof state.savedTeamIdSeq === 'number') savedTeamIdSeq = Math.max(savedTeamIdSeq, state.savedTeamIdSeq);
     if (Array.isArray(state.teams) || Array.isArray(state.saves) || Array.isArray(state.characters) || Array.isArray(state.savedTeams)) persistTeamsAndRostersLocally();
     if ('matchSim' in state) { matchSim = state.matchSim; renderMatchSim(); }
     if (Array.isArray(state.activityLog)) activityLog = state.activityLog;
