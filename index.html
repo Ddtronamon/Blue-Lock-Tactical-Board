@@ -6,7 +6,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Blue Lock: Egoist Reborn.</title>
+<title>Blue Lock Egoist Reborn: U20's World Cup</title>
 <style>
   :root{
     --bg:#070a12;
@@ -2215,8 +2215,8 @@
 
   <header>
     <div class="brand">
-      <h1>Blue Lock<span>:</span> Egoist Reborn.</h1>
-      <small>Neo Egoist League</small>
+      <h1>Blue Lock Egoist Reborn<span>:</span></h1>
+      <small>U20's World Cup</small>
     </div>
     <div class="header-actions">
       <div class="mode-toggle-stack">
@@ -2756,16 +2756,13 @@
       <button class="delete-btn" id="matchSimForfeitBtn" type="button">End Simulation</button>
     </div>
   </div>
+  <div id="matchSimZone" style="text-align:center; font-size:13px; color:var(--muted); padding:4px 0;"></div>
   <div class="team-stats-body" id="matchSimTimeline" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
   <div style="padding:16px 0; display:flex; flex-direction:column; align-items:center; gap:10px;">
     <button class="btn dash-use-btn" id="matchSimContinueBtn" type="button" style="width:220px; padding:12px;">Continue</button>
     <div id="matchSimDecision" style="display:none; flex-direction:column; align-items:center; gap:10px; width:100%;">
-      <p id="matchSimDecisionLabel" style="font-weight:800; font-size:15px; margin:0;"></p>
-      <div style="display:flex; gap:10px;">
-        <button class="btn dash-use-btn" id="matchSimShootBtn" type="button">Shoot</button>
-        <button class="btn dash-use-btn" id="matchSimPassBtn" type="button">Pass</button>
-        <button class="btn dash-use-btn" id="matchSimDribbleBtn" type="button">Dribble</button>
-      </div>
+      <p id="matchSimDecisionLabel" style="font-weight:800; font-size:15px; margin:0; text-align:center;"></p>
+      <div id="matchSimDecisionOptions" style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;"></div>
     </div>
     <button class="btn" id="matchSimCloseBtn" type="button" style="display:none; width:220px; padding:12px;">Close</button>
   </div>
@@ -7026,6 +7023,7 @@
   // own goal. Wall size scales with how close the foul is to goal.
   // ============================================================
   // ============================================================
+  // ============================================================
   // Match Simulation — for matches you don't want to play out live.
   // Resolves the whole thing instantly using the exact same dice/stat
   // math as everything else, then animates the key moments so you can
@@ -7062,20 +7060,80 @@
     return pool[pool.length - 1];
   }
 
+  // The same buff/debuff pipeline live 1v1 challenges use (applyTalentBuff +
+  // getOpponentTalentDebuff) so Flow/Destroyer/Predator/Weapon/talents affect
+  // simulated rolls exactly the way they'd affect a real challenge. Talent
+  // charges are genuinely consumed here, same shared pool as live play.
+  function simEffectiveStat(pin, statKey, opponent){
+    let v = getPinStat(pin, statKey) + applyTalentBuff(pin, statKey);
+    if (opponent) v += getOpponentTalentDebuff(pin, opponent);
+    return v;
+  }
+
   function simRollVs(pinA, statA, pinB, statB){
     const rollA = Math.floor(Math.random() * 20) + 1;
     const rollB = Math.floor(Math.random() * 20) + 1;
-    return { aWins: (rollA + getPinStat(pinA, statA)) > (rollB + getPinStat(pinB, statB)) };
+    const buffA = simEffectiveStat(pinA, statA, pinB);
+    const buffB = simEffectiveStat(pinB, statB, pinA);
+    const totalA = rollA + buffA, totalB = rollB + buffB;
+    return { aWins: totalA > totalB, rollA, rollB, totalA, totalB, natA1: rollA === 1, natB1: rollB === 1 };
   }
 
   // ============================================================
-  // Match Simulation v2 — a shared, synced timeline everyone in the
+  // Match Simulation v3 — a shared, synced timeline everyone in the
   // Conference sees together. Advances one moment at a time via
-  // "Continue". Most events auto-resolve, but a genuine big chance
-  // pauses for a Shoot/Pass/Dribble choice before rolling the outcome.
-  // Two modes: Regular (90/120/penalties) and Target (first to N goals).
+  // "Continue". Play moves through three field acts (Center, Final
+  // Third, Box), each with its own mix of possible events — most
+  // ticks are just a contested dogfight, a turnover, a foul, a
+  // throw-in, nothing dramatic. Possession carries over seamlessly
+  // between ticks (whoever last got the ball stays "on it" until it's
+  // lost), and every so often — entering a dangerous area, a genuine
+  // chance — it drops into an interactive spell: a few turns of an
+  // expanded action menu (Pass/Dribble/Long Ball/Hold-Up Play/Shoot,
+  // whichever fit the current act) before handing back to narrative
+  // auto-play. Two match lengths: Regular (90/120/penalties) and
+  // Target (first to N goals).
   // ============================================================
   let matchSim = null; // the single shared sim state, or null when no sim is running
+
+  const SIM_ZONE_NAMES = ['Center', 'Final Third', 'Box'];
+  function zoneName(z){ return SIM_ZONE_NAMES[z] || SIM_ZONE_NAMES[0]; }
+
+  // Weighted event tables per act. Center never shoots (too far out);
+  // Box never has a plain foul (any foul there is a penalty) or a
+  // throw-in (rarely near the touchline). Weights are relative, not
+  // percentages — they just need to sum sensibly within each table.
+  const SIM_ZONE_EVENTS = [
+    [['dogfight', 30], ['progress', 20], ['turnover', 14], ['foul', 10], ['throwin', 12], ['buildup', 14]], // Center
+    [['dogfight', 22], ['progress', 18], ['turnover', 16], ['foul', 12], ['throwin', 8], ['shot', 16], ['corner', 8]], // Final Third
+    [['dogfight', 14], ['turnover', 18], ['penalty-foul', 8], ['shot', 42], ['corner', 18]] // Box
+  ];
+
+  // Which decision-menu choices are offered during an interactive spell,
+  // depending on which act it's happening in.
+  const SIM_DECISION_OPTIONS = {
+    0: [['pass', 'Pass'], ['dribble', 'Dribble'], ['longball', 'Long Ball'], ['holdup', 'Hold-Up Play']],
+    1: [['shoot', 'Shoot'], ['pass', 'Pass'], ['dribble', 'Dribble'], ['holdup', 'Hold-Up Play']],
+    2: [['shoot', 'Shoot'], ['pass', 'Pass'], ['dribble', 'Dribble']]
+  };
+
+  function weightedPickEvent(table){
+    const total = table.reduce((sum, e) => sum + e[1], 0);
+    let r = Math.random() * total;
+    for (let i = 0; i < table.length; i++) { r -= table[i][1]; if (r <= 0) return table[i][0]; }
+    return table[table.length - 1][0];
+  }
+
+  // Picks who ends up "on the ball" after a change of possession or a
+  // successful advance — midfielders in the Center, attackers further up.
+  function pickNewCarrier(teamPins, zone){
+    return simPickFocal(teamPins, zone === 0 ? 'Midfielders' : 'Attackers', 'ACC');
+  }
+
+  function simTeamIdsFor(team){ return team === 'A' ? matchSim.teamA : matchSim.teamB; }
+  function simLivePinsFor(team){
+    return simTeamIdsFor(team).map(id => pins.find(p => p.id === id)).filter(p => p && !p.onBench && !p.banned);
+  }
 
   function addSimTimelineEntry(text){
     matchSim.timeline.push(text);
@@ -7085,7 +7143,7 @@
   function startMatchSim(simMode, targetScore){
     const teams = getSimTeams();
     if (!teams) {
-      showToast('Need two distinctly-colored kits on the field to simulate \u2014 same trick the foul wall uses to tell teams apart.', 'error');
+      showToast('Need two distinctly-colored kits on the field to simulate — same trick the foul wall uses to tell teams apart.', 'error');
       return;
     }
     matchSim = {
@@ -7095,9 +7153,10 @@
       minute: 0, phase: 'first-half', // first-half | second-half | extra-time | penalties | finished
       timeline: [],
       pendingDecision: null,
-      penaltyRound: 0, penaltiesA: [], penaltiesB: []
+      penaltyRound: 0, penaltiesA: [], penaltiesB: [],
+      possessionTeam: null, zone: 0, carrierId: null, interactiveTurnsLeft: 0
     };
-    addSimTimelineEntry('Kickoff! ' + (simMode === 'target' ? ('First to ' + targetScore + ' goals wins.') : 'Regular match \u2014 90 minutes.'));
+    addSimTimelineEntry('Kickoff! ' + (simMode === 'target' ? ('First to ' + targetScore + ' goals wins.') : 'Regular match — 90 minutes.'));
     logEvent('Match simulation started (' + simMode + ' mode).');
     markDirty();
     renderMatchSim();
@@ -7105,6 +7164,7 @@
 
   function finishMatchSim(penaltyShootout, penA, penB){
     matchSim.phase = 'finished';
+    matchSim.pendingDecision = null;
     let summary;
     if (penaltyShootout) {
       summary = 'Full time! ' + matchSim.scoreA + '-' + matchSim.scoreB + ' (' + (penA > penB ? 'Team A' : 'Team B') + ' win ' + penA + '-' + penB + ' on penalties)';
@@ -7119,6 +7179,60 @@
     logEvent(summary);
     markDirty();
     renderMatchSim();
+  }
+
+  // Scores a goal, handles the target-score win-check, and (unless the
+  // match just ended) restarts play with a kickoff for the team that
+  // conceded — shared by open play, corners and penalties alike so every
+  // "GOAL" path resets state exactly the same way.
+  function scoreGoal(team, scorer){
+    if (team === 'A') matchSim.scoreA++; else matchSim.scoreB++;
+    addSimTimelineEntry('⚽ GOAL! ' + pinLabel(scorer) + '! ' + matchSim.scoreA + '-' + matchSim.scoreB);
+    spawnGoalEffect();
+    logEvent(matchSim.minute + "' — GOAL, " + pinLabel(scorer));
+    matchSim.pendingDecision = null;
+    matchSim.interactiveTurnsLeft = 0;
+    if (matchSim.mode === 'target' && (matchSim.scoreA >= matchSim.targetScore || matchSim.scoreB >= matchSim.targetScore)) {
+      finishMatchSim();
+      return;
+    }
+    matchSim.possessionTeam = team === 'A' ? 'B' : 'A';
+    matchSim.zone = 0;
+    matchSim.carrierId = null;
+  }
+
+  // A corner kick — a genuine second chance, shared by the auto "deflected
+  // behind" narrative event and by a saved shot going out during an
+  // interactive decision.
+  function resolveCornerKick(team, attackingPins, defendingPins){
+    const target = simPickFocal(attackingPins, 'Attackers', 'STR');
+    const defender = simPickFocal(defendingPins, 'Defenders', 'STR');
+    const aerial = simRollVs(target, 'STR', defender, 'STR');
+    if (aerial.aWins) {
+      const keeper = simPickFocal(defendingPins, 'Goalkeepers', 'MTL');
+      const shotResult = simRollVs(target, 'ACC', keeper, 'MTL');
+      if (shotResult.aWins) { scoreGoal(team, target); return; }
+      addSimTimelineEntry('— ' + pinLabel(target) + ' wins it in the air, but ' + pinLabel(keeper) + ' claims it.');
+    } else {
+      addSimTimelineEntry('— Corner cleared by ' + pinLabel(defender) + '.');
+    }
+    matchSim.possessionTeam = team === 'A' ? 'B' : 'A';
+    matchSim.zone = 0;
+    matchSim.carrierId = defender.id;
+  }
+
+  // A single mid-match penalty kick — distinct from the end-of-match
+  // shootout below, which is a best-of-5 decider.
+  function resolveMidMatchPenalty(team, possessingPins, defendingPins){
+    addSimTimelineEntry(matchSim.minute + "' — FOUL IN THE BOX! Penalty to " + (team === 'A' ? 'Team A' : 'Team B') + '!');
+    const shooter = simPickFocal(possessingPins, 'Attackers', 'ACC');
+    const keeper = simPickFocal(defendingPins, 'Goalkeepers', 'MTL');
+    const kick = simRollVs(shooter, 'ACC', keeper, 'MTL');
+    if (kick.aWins) { scoreGoal(team, shooter); return; }
+    addSimTimelineEntry('— Penalty saved by ' + pinLabel(keeper) + '!');
+    matchSim.possessionTeam = team === 'A' ? 'B' : 'A';
+    matchSim.zone = 0;
+    matchSim.carrierId = keeper.id;
   }
 
   function advancePenaltyKick(teamAPins, teamBPins){
@@ -7141,13 +7255,110 @@
     renderMatchSim();
   }
 
+  // ---- narrative-tick event resolvers (auto, no user choice) ----
+
+  function resolveDogfight(possessing, defending, carrier){
+    const inCenter = matchSim.zone === 0;
+    const rival = simPickFocal(defending, inCenter ? 'Midfielders' : 'Defenders', inCenter ? 'SPD' : 'STR');
+    const statKey = inCenter ? 'SPD' : 'STR';
+    const d = simRollVs(carrier, statKey, rival, statKey);
+    if (d.aWins) {
+      addSimTimelineEntry(matchSim.minute + "' — " + pinLabel(carrier) + ' wins the battle for it in the ' + zoneName(matchSim.zone).toLowerCase() + '.');
+      matchSim.carrierId = carrier.id;
+    } else {
+      addSimTimelineEntry(matchSim.minute + "' — " + pinLabel(rival) + ' comes away with the ball.');
+      matchSim.possessionTeam = matchSim.possessionTeam === 'A' ? 'B' : 'A';
+      matchSim.zone = 0;
+      matchSim.carrierId = rival.id;
+    }
+  }
+
+  function resolveProgress(possessing, defending, carrier){
+    const defender = simPickFocal(defending, 'Defenders', 'AGL');
+    const d = simRollVs(carrier, 'ACC', defender, 'AGL');
+    if (d.aWins) {
+      matchSim.zone = Math.min(2, matchSim.zone + 1);
+      const nextCarrier = pickNewCarrier(possessing, matchSim.zone);
+      matchSim.carrierId = nextCarrier.id;
+      addSimTimelineEntry(matchSim.minute + "' — " + pinLabel(carrier) + ' finds ' + pinLabel(nextCarrier) + ' — into the ' + zoneName(matchSim.zone) + '.');
+    } else {
+      addSimTimelineEntry(matchSim.minute + "' — " + pinLabel(defender) + ' cuts the ball out.');
+      matchSim.possessionTeam = matchSim.possessionTeam === 'A' ? 'B' : 'A';
+      matchSim.zone = 0;
+      matchSim.carrierId = defender.id;
+    }
+  }
+
+  function resolveTurnover(possessing, defending, carrier){
+    const winner = simPickFocal(defending, 'Defenders', 'STR');
+    addSimTimelineEntry(matchSim.minute + "' — " + pinLabel(carrier) + ' gives it away — ' + pinLabel(winner) + ' pounces.');
+    matchSim.possessionTeam = matchSim.possessionTeam === 'A' ? 'B' : 'A';
+    matchSim.zone = 0;
+    matchSim.carrierId = winner.id;
+  }
+
+  function resolveFoulRestart(){
+    if (matchSim.zone === 1) {
+      const wallSize = 1 + Math.floor(Math.random() * 4);
+      addSimTimelineEntry(matchSim.minute + "' — Foul! Free kick on the edge of the box — wall of " + wallSize + ' goes up.');
+    } else {
+      addSimTimelineEntry(matchSim.minute + "' — Foul in midfield — free kick given.");
+    }
+    // possession, zone and carrier are untouched — the fouled team simply restarts from here
+  }
+
+  function resolveThrowIn(){
+    addSimTimelineEntry(matchSim.minute + "' — Out for a throw-in.");
+    matchSim.possessionTeam = matchSim.possessionTeam === 'A' ? 'B' : 'A';
+    matchSim.zone = 0;
+    matchSim.carrierId = null; // picked fresh on the next tick
+  }
+
+  function resolveCornerAuto(possessing, defending){
+    addSimTimelineEntry(matchSim.minute + "' — Deflected behind — corner kick.");
+    resolveCornerKick(matchSim.possessionTeam, possessing, defending);
+  }
+
+  function beginShotDecision(possessing, defending, carrier){
+    const defender = simPickFocal(defending, 'Defenders', 'STR');
+    const keeper = simPickFocal(defending, 'Goalkeepers', 'MTL');
+    matchSim.interactiveTurnsLeft = Math.max(matchSim.interactiveTurnsLeft || 0, 3);
+    matchSim.pendingDecision = { attackerId: carrier.id, defenderId: defender.id, keeperId: keeper.id, team: matchSim.possessionTeam, zone: matchSim.zone };
+    addSimTimelineEntry(matchSim.minute + "' — Big chance for " + pinLabel(carrier) + ' in the ' + zoneName(matchSim.zone) + '! What does he do?');
+  }
+
+  function beginBuildupDecision(possessing, defending, carrier){
+    const defender = simPickFocal(defending, 'Midfielders', 'STR');
+    const keeper = simPickFocal(defending, 'Goalkeepers', 'MTL'); // unused by any Center option, kept for a consistent pendingDecision shape
+    matchSim.interactiveTurnsLeft = Math.max(matchSim.interactiveTurnsLeft || 0, 3);
+    matchSim.pendingDecision = { attackerId: carrier.id, defenderId: defender.id, keeperId: keeper.id, team: matchSim.possessionTeam, zone: 0 };
+    addSimTimelineEntry(matchSim.minute + "' — " + pinLabel(carrier) + ' has time on the ball in midfield. What’s the call?');
+  }
+
+  function runNarrativeTick(possessing, defending, carrier){
+    const event = weightedPickEvent(SIM_ZONE_EVENTS[matchSim.zone]);
+    switch (event) {
+      case 'dogfight': resolveDogfight(possessing, defending, carrier); break;
+      case 'progress': resolveProgress(possessing, defending, carrier); break;
+      case 'turnover': resolveTurnover(possessing, defending, carrier); break;
+      case 'foul': resolveFoulRestart(); break;
+      case 'throwin': resolveThrowIn(); break;
+      case 'shot': beginShotDecision(possessing, defending, carrier); break;
+      case 'buildup': beginBuildupDecision(possessing, defending, carrier); break;
+      case 'corner': resolveCornerAuto(possessing, defending); break;
+      case 'penalty-foul': resolveMidMatchPenalty(matchSim.possessionTeam, possessing, defending); break;
+    }
+    markDirty();
+    renderMatchSim();
+  }
+
   function advanceMatchSim(){
     if (!matchSim || matchSim.pendingDecision || matchSim.phase === 'finished') return;
 
-    const teamAPins = matchSim.teamA.map(id => pins.find(p => p.id === id)).filter(p => p && !p.onBench && !p.banned);
-    const teamBPins = matchSim.teamB.map(id => pins.find(p => p.id === id)).filter(p => p && !p.onBench && !p.banned);
+    const teamAPins = simLivePinsFor('A');
+    const teamBPins = simLivePinsFor('B');
     if (!teamAPins.length || !teamBPins.length) {
-      addSimTimelineEntry('A team has no players left on the field \u2014 simulation stopped.');
+      addSimTimelineEntry('A team has no players left on the field — simulation stopped.');
       matchSim.phase = 'finished';
       markDirty(); renderMatchSim();
       return;
@@ -7160,15 +7371,18 @@
     if (matchSim.mode === 'regular') {
       if (matchSim.phase === 'first-half' && matchSim.minute >= 45) {
         matchSim.minute = 45;
-        addSimTimelineEntry("45' \u2014 Half-time. " + matchSim.scoreA + '-' + matchSim.scoreB);
+        addSimTimelineEntry("45' — Half-time. " + matchSim.scoreA + '-' + matchSim.scoreB);
         matchSim.phase = 'second-half';
+        matchSim.possessionTeam = matchSim.possessionTeam === 'A' ? 'B' : 'A'; // kicks off the other way, same as a real half-time
+        matchSim.zone = 0; matchSim.carrierId = null; matchSim.interactiveTurnsLeft = 0;
         markDirty(); renderMatchSim(); return;
       }
       if (matchSim.phase === 'second-half' && matchSim.minute >= 90) {
         matchSim.minute = 90;
         if (matchSim.scoreA === matchSim.scoreB) {
-          addSimTimelineEntry("90' \u2014 Full time, level at " + matchSim.scoreA + '-' + matchSim.scoreB + '. Extra time!');
+          addSimTimelineEntry("90' — Full time, level at " + matchSim.scoreA + '-' + matchSim.scoreB + '. Extra time!');
           matchSim.phase = 'extra-time';
+          matchSim.zone = 0; matchSim.carrierId = null; matchSim.interactiveTurnsLeft = 0;
           markDirty(); renderMatchSim(); return;
         }
         finishMatchSim(); return;
@@ -7176,7 +7390,7 @@
       if (matchSim.phase === 'extra-time' && matchSim.minute >= 120) {
         matchSim.minute = 120;
         if (matchSim.scoreA === matchSim.scoreB) {
-          addSimTimelineEntry("120' \u2014 Still level. Penalties!");
+          addSimTimelineEntry("120' — Still level. Penalties!");
           matchSim.phase = 'penalties';
           markDirty(); renderMatchSim(); return;
         }
@@ -7184,23 +7398,55 @@
       }
     }
 
-    const ratingA = simTeamRating(teamAPins), ratingB = simTeamRating(teamBPins);
-    const aAttacking = Math.random() < (ratingA / (ratingA + ratingB));
-    const attackers = aAttacking ? teamAPins : teamBPins;
-    const defenders = aAttacking ? teamBPins : teamAPins;
-    const attacker = simPickFocal(attackers, 'Attackers', 'ACC');
-    const defender = simPickFocal(defenders, 'Defenders', 'STR');
-    const contest = simRollVs(attacker, 'ACC', defender, 'STR');
-
-    if (!contest.aWins) {
-      addSimTimelineEntry(matchSim.minute + "' \u2014 " + pinLabel(defender) + ' shuts down the attack.');
-    } else {
-      const keeper = simPickFocal(defenders, 'Goalkeepers', 'MTL');
-      matchSim.pendingDecision = { attackerId: attacker.id, defenderId: defender.id, keeperId: keeper.id, team: aAttacking ? 'A' : 'B' };
-      addSimTimelineEntry(matchSim.minute + "' \u2014 Big chance for " + pinLabel(attacker) + '! What does he do?');
+    if (!matchSim.possessionTeam) {
+      const ratingA = simTeamRating(teamAPins), ratingB = simTeamRating(teamBPins);
+      matchSim.possessionTeam = Math.random() < (ratingA / (ratingA + ratingB)) ? 'A' : 'B';
+      matchSim.zone = 0;
+      matchSim.carrierId = null;
     }
-    markDirty();
-    renderMatchSim();
+
+    const possessing = matchSim.possessionTeam === 'A' ? teamAPins : teamBPins;
+    const defending = matchSim.possessionTeam === 'A' ? teamBPins : teamAPins;
+    let carrier = matchSim.carrierId ? possessing.find(p => p.id === matchSim.carrierId) : null;
+    if (!carrier) carrier = pickNewCarrier(possessing, matchSim.zone);
+    matchSim.carrierId = carrier.id;
+
+    runNarrativeTick(possessing, defending, carrier);
+  }
+
+  // ---- interactive-spell resolvers (the expanded decision menu) ----
+
+  // Ends the current possession sequence in the other team's favor and
+  // always drops back to narrative mode — losing the ball breaks the flow.
+  function handTurnover(oldTeam, winner){
+    matchSim.possessionTeam = oldTeam === 'A' ? 'B' : 'A';
+    matchSim.zone = 0;
+    matchSim.carrierId = winner ? winner.id : null;
+    matchSim.interactiveTurnsLeft = 0;
+  }
+
+  // A mistimed challenge (natural 1) during an interactive spell — a
+  // penalty in the Box, otherwise a free kick that also hands back to
+  // narrative mode for the restart.
+  function resolveFoulOrPenalty(team, zone){
+    matchSim.interactiveTurnsLeft = 0;
+    if (zone === 2) {
+      resolveMidMatchPenalty(team, simLivePinsFor(team), simLivePinsFor(team === 'A' ? 'B' : 'A'));
+      return;
+    }
+    addSimTimelineEntry('— Free kick given' + (zone === 1 ? (' — wall of ' + (1 + Math.floor(Math.random() * 4)) + ' goes up.') : '.'));
+  }
+
+  // Still got the ball and turns remain in this spell — immediately puts up
+  // the next decision instead of falling back to a plain Continue button.
+  function continueInteractiveOrHandBack(team, newCarrier){
+    if (matchSim.interactiveTurnsLeft <= 0) return;
+    const defendingPins = simLivePinsFor(team === 'A' ? 'B' : 'A');
+    if (!defendingPins.length) { matchSim.interactiveTurnsLeft = 0; return; }
+    const defender = simPickFocal(defendingPins, matchSim.zone === 0 ? 'Midfielders' : 'Defenders', 'STR');
+    const keeper = simPickFocal(defendingPins, 'Goalkeepers', 'MTL');
+    matchSim.pendingDecision = { attackerId: newCarrier.id, defenderId: defender.id, keeperId: keeper.id, team, zone: matchSim.zone };
+    addSimTimelineEntry(pinLabel(newCarrier) + ' — what does he do next?');
   }
 
   function resolveMatchSimDecision(choice){
@@ -7209,36 +7455,81 @@
     const attacker = pins.find(p => p.id === d.attackerId);
     const defender = pins.find(p => p.id === d.defenderId);
     const keeper = pins.find(p => p.id === d.keeperId);
+    const team = d.team;
     matchSim.pendingDecision = null;
-    if (!attacker || !keeper) {
-      addSimTimelineEntry('Play breaks down \u2014 someone left the field.');
+    matchSim.interactiveTurnsLeft = Math.max(0, (matchSim.interactiveTurnsLeft || 1) - 1);
+
+    const possessingPins = simLivePinsFor(team);
+    const defendingPins = simLivePinsFor(team === 'A' ? 'B' : 'A');
+    if (!attacker || !keeper || !possessingPins.length || !defendingPins.length) {
+      addSimTimelineEntry('— Play breaks down — someone left the field.');
+      matchSim.interactiveTurnsLeft = 0;
       markDirty(); renderMatchSim();
       return;
     }
 
-    let shotHappens = (choice === 'shoot');
-    if (choice === 'pass') {
-      if (defender && simRollVs(attacker, 'ACC', defender, 'AGL').aWins) { addSimTimelineEntry('\u2014 Pass finds a teammate in space!'); shotHappens = true; }
-      else addSimTimelineEntry('\u2014 Pass cut out. Turnover.');
-    } else if (choice === 'dribble') {
-      if (defender && simRollVs(attacker, 'AGL', defender, 'STR').aWins) { addSimTimelineEntry('\u2014 Skates past the defender!'); shotHappens = true; }
-      else addSimTimelineEntry('\u2014 Dispossessed. Turnover.');
-    }
-
-    if (shotHappens) {
-      if (simRollVs(attacker, 'ACC', keeper, 'MTL').aWins) {
-        if (d.team === 'A') matchSim.scoreA++; else matchSim.scoreB++;
-        addSimTimelineEntry('\u26BD GOAL! ' + pinLabel(attacker) + '! ' + matchSim.scoreA + '-' + matchSim.scoreB);
-        spawnGoalEffect();
-        logEvent(matchSim.minute + "' \u2014 GOAL, " + pinLabel(attacker));
-        if (matchSim.mode === 'target' && (matchSim.scoreA >= matchSim.targetScore || matchSim.scoreB >= matchSim.targetScore)) {
-          finishMatchSim();
-          return;
-        }
+    if (choice === 'shoot') {
+      const shotRoll = simRollVs(attacker, 'ACC', keeper, 'MTL');
+      if (shotRoll.aWins) { scoreGoal(team, attacker); markDirty(); renderMatchSim(); return; }
+      if (shotRoll.natA1) {
+        addSimTimelineEntry('— Wild miss, over the bar — goal kick.');
+        handTurnover(team, keeper);
       } else {
-        addSimTimelineEntry('\u2014 Saved by ' + pinLabel(keeper) + '!');
+        addSimTimelineEntry('— Saved by ' + pinLabel(keeper) + ' — out for a corner!');
+        matchSim.interactiveTurnsLeft = 0;
+        resolveCornerKick(team, possessingPins, defendingPins);
+      }
+    } else if (choice === 'pass') {
+      const d2 = defender ? simRollVs(attacker, 'ACC', defender, 'AGL') : { aWins: true };
+      if (d2.aWins) {
+        const receiver = pickNewCarrier(possessingPins, matchSim.zone);
+        matchSim.carrierId = receiver.id;
+        addSimTimelineEntry('— Pass finds ' + pinLabel(receiver) + ' in space!');
+        continueInteractiveOrHandBack(team, receiver);
+      } else {
+        addSimTimelineEntry('— Pass cut out by ' + pinLabel(defender) + '. Turnover.');
+        handTurnover(team, defender);
+      }
+    } else if (choice === 'dribble') {
+      const d2 = defender ? simRollVs(attacker, 'AGL', defender, 'STR') : { aWins: true };
+      if (d2.aWins) {
+        matchSim.zone = Math.min(2, matchSim.zone + 1);
+        matchSim.carrierId = attacker.id;
+        addSimTimelineEntry('— ' + pinLabel(attacker) + ' skates past ' + pinLabel(defender) + '!');
+        continueInteractiveOrHandBack(team, attacker);
+      } else if (d2.natB1) {
+        addSimTimelineEntry('— Mistimed challenge by ' + pinLabel(defender) + ' — FOUL!');
+        resolveFoulOrPenalty(team, matchSim.zone);
+      } else {
+        addSimTimelineEntry('— Dispossessed by ' + pinLabel(defender) + '. Turnover.');
+        handTurnover(team, defender);
+      }
+    } else if (choice === 'longball') {
+      const d2 = simRollVs(attacker, 'ACC', defender, 'MTL');
+      if (d2.aWins) {
+        matchSim.zone = 2;
+        const receiver = pickNewCarrier(possessingPins, 2);
+        matchSim.carrierId = receiver.id;
+        addSimTimelineEntry('— Long ball over the top — ' + pinLabel(receiver) + ' is straight through!');
+        continueInteractiveOrHandBack(team, receiver);
+      } else {
+        addSimTimelineEntry('— Overhit — straight through to the keeper.');
+        handTurnover(team, keeper);
+      }
+    } else if (choice === 'holdup') {
+      const d2 = simRollVs(attacker, 'STR', defender, 'STR');
+      if (d2.aWins) {
+        addSimTimelineEntry('— ' + pinLabel(attacker) + ' holds the ball up, team regroups.');
+        continueInteractiveOrHandBack(team, attacker);
+      } else if (d2.natB1) {
+        addSimTimelineEntry('— Mistimed challenge — FOUL, holds onto it!');
+        resolveFoulOrPenalty(team, matchSim.zone);
+      } else {
+        addSimTimelineEntry('— Muscled off the ball. Turnover.');
+        handTurnover(team, defender);
       }
     }
+
     markDirty();
     renderMatchSim();
   }
@@ -7258,6 +7549,15 @@
     document.getElementById('matchSimClock').textContent = matchSim.phase === 'penalties' ? 'Penalties'
       : matchSim.phase === 'finished' ? 'Full Time' : (matchSim.minute + "'");
 
+    const zoneEl = document.getElementById('matchSimZone');
+    if (zoneEl) {
+      if (matchSim.phase === 'finished' || matchSim.phase === 'penalties' || matchSim.zone == null || !matchSim.possessionTeam) {
+        zoneEl.textContent = '';
+      } else {
+        zoneEl.textContent = zoneName(matchSim.zone) + ' — ' + (matchSim.possessionTeam === 'A' ? 'Team A' : 'Team B') + ' on the ball';
+      }
+    }
+
     const list = document.getElementById('matchSimTimeline');
     list.innerHTML = '';
     matchSim.timeline.forEach(entry => {
@@ -7271,6 +7571,7 @@
     const continueBtn = document.getElementById('matchSimContinueBtn');
     const decisionWrap = document.getElementById('matchSimDecision');
     const closeBtn = document.getElementById('matchSimCloseBtn');
+    const optionsWrap = document.getElementById('matchSimDecisionOptions');
 
     if (matchSim.phase === 'finished') {
       continueBtn.style.display = 'none';
@@ -7281,7 +7582,18 @@
       closeBtn.style.display = 'none';
       decisionWrap.style.display = 'flex';
       const attacker = pins.find(p => p.id === matchSim.pendingDecision.attackerId);
-      document.getElementById('matchSimDecisionLabel').textContent = (attacker ? pinLabel(attacker) : 'Player') + ' \u2014 what does he do?';
+      const turnsNote = matchSim.interactiveTurnsLeft > 1 ? (' (' + matchSim.interactiveTurnsLeft + ' decisions left in this spell)') : '';
+      document.getElementById('matchSimDecisionLabel').textContent = (attacker ? pinLabel(attacker) : 'Player') + ' — what does he do?' + turnsNote;
+      optionsWrap.innerHTML = '';
+      const opts = SIM_DECISION_OPTIONS[matchSim.pendingDecision.zone] || SIM_DECISION_OPTIONS[1];
+      opts.forEach(([choice, label]) => {
+        const btn = document.createElement('button');
+        btn.className = 'btn dash-use-btn';
+        btn.type = 'button';
+        btn.textContent = label;
+        btn.addEventListener('click', () => resolveMatchSimDecision(choice));
+        optionsWrap.appendChild(btn);
+      });
     } else {
       continueBtn.style.display = 'inline-block';
       decisionWrap.style.display = 'none';
@@ -7319,9 +7631,6 @@
     startMatchSim(matchSimSetupMode, target);
   });
   document.getElementById('matchSimContinueBtn').addEventListener('click', advanceMatchSim);
-  document.getElementById('matchSimShootBtn').addEventListener('click', () => resolveMatchSimDecision('shoot'));
-  document.getElementById('matchSimPassBtn').addEventListener('click', () => resolveMatchSimDecision('pass'));
-  document.getElementById('matchSimDribbleBtn').addEventListener('click', () => resolveMatchSimDecision('dribble'));
   document.getElementById('matchSimCloseBtn').addEventListener('click', endMatchSimEarly);
   document.getElementById('matchSimForfeitBtn').addEventListener('click', endMatchSimEarly);
 
@@ -7640,6 +7949,17 @@
     if (mode === 'play' && !hasStartedPlay) {
       resetRound();
       maxChunkReached = Number(chunkValue.value) || 1;
+      // Bug fix: Clear Field and End Match both stamp maxChunkResetAt here to mark
+      // this as an EXPLICIT reset — this site (the very first Edit->Play switch)
+      // used to skip that stamp, so a later sync merge (mergeMaxChunk) could see a
+      // stale/leftover maxChunkReached (e.g. from a previous match still sitting in
+      // this device's own last save) with an old-but-not-older resetAt, and silently
+      // adopt that higher stale value instead of this fresh one — pushing the
+      // "genuinely new chunk" threshold up without ever running tickDashCooldowns()/
+      // resetRound(). That's what caused dash cooldowns to stall short of 0 and made
+      // it take one extra chunk advance to get actions back, especially right after
+      // toggling Edit<->Play (which fires the markDirty()/save that exposes the merge).
+      maxChunkResetAt = Date.now();
       hasStartedPlay = true;
     }
     closeEdit();
@@ -8681,7 +9001,8 @@
         <li><strong>Regular</strong> — 90 simulated minutes, extra time to 120 if it's tied, then a real penalty shootout (best-of-5, sudden death if still level) if it's still not decided.</li>
         <li><strong>Target</strong> — set a goal count beforehand; the match ends the instant either side reaches it.</li>
       </ul>
-      <p>It advances one moment at a time — anyone can hit "Continue." Most possessions resolve automatically, but a genuine big chance pauses and offers <strong>Shoot / Pass / Dribble</strong> as an actual choice before rolling the outcome, tied to a real named pin on the field.</p>
+      <p>It advances one moment at a time — anyone can hit "Continue." Play moves through three acts: <strong>Center</strong> (midfield battles — dogfights, turnovers, fouls, throw-ins; no shooting from here), <strong>Final Third</strong> (can shoot or pass), and the <strong>Box</strong> (the most dangerous shooting zone, where a foul is always a penalty). Not everything leads to a goal — most ticks are just a contested duel, a loose ball, a stoppage.</p>
+      <p>Possession carries over seamlessly — whoever last got the ball stays on it until it's actually lost. Every so often (entering a dangerous area, a genuine chance) play drops into an <strong>interactive spell</strong>: a few turns in a row of an expanded choice menu — Pass, Dribble, Long Ball, Hold-Up Play, Shoot, whichever fit the current act — before handing back to auto-narration. Every roll is tied to a real named pin's actual stats, including any active Flow/Destroyer/Predator/Weapon/talent buffs.</p>
     `},
     { id: 'conference', title: 'Conference (Multiplayer)', html: `
       <h3>Conference (Multiplayer)</h3>
