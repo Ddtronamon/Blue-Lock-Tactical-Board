@@ -2400,6 +2400,7 @@
         </g>
       </svg>
 
+      <div class="assassin-zone-layer" id="assassinZoneLayer" style="position:absolute; inset:0; pointer-events:none;"></div>
       <div class="pin-layer" id="pinLayer"></div>
       <div class="goal-3d-bar goal-3d-left"></div>
       <div class="goal-3d-bar goal-3d-right"></div>
@@ -2970,7 +2971,7 @@
       <option value="Meta-Vision">Meta-Vision</option>
       <option value="Destroyer Eyes">Destroyer Eyes</option>
     </select>
-    <p class="stat-hint">Activated from the Talent tab in Play mode (Destroyer Eyes activates from the Flow tab instead). Each talent's charges and activation are independent.</p>
+    <p class="stat-hint">Activated from the Talent tab in Play mode. Each talent's own activate/cooldown cycle is independent.</p>
 
     <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
       <label style="margin:0;">Specialties</label>
@@ -3098,13 +3099,6 @@
       </div>
     </div>
 
-    <div id="metaDashSection" style="display:none;">
-      <div class="dash-status" id="metaDashStatus" title="Free, doesn't touch your normal Dash charges. Weaker than Acceleration, stronger than a normal move. Only usable while Meta-Vision is active.">
-        <div class="dash-pips" id="metaDashPips"></div>
-        <span class="dash-status-text" id="metaDashStatusText">2 / 2 ready</span>
-        <button class="btn dash-use-btn-inline" id="useMetaDashBtn" type="button">Meta <span class="tag-speedster">MV</span></button>
-      </div>
-    </div>
   </div>
 
   <div class="tab-pane" data-pane="talent" style="display:none;">
@@ -3128,14 +3122,6 @@
     <div class="swatches" id="flowSwatches"></div>
     <p class="stat-hint">Wraps the pin in a pulsing aura that moves with it. Lasts 6 turns, then a 5-chunk cooldown, then 3 more turns &mdash; after that it's locked for the match.</p>
 
-    <div id="destroyerSection" style="display:none;">
-      <label>Destroyer Eyes <span class="tag-speedster">Flow Only</span></label>
-      <div class="dash-status" id="destroyerStatus">
-        <span class="dash-status-text" id="destroyerStatusText">Ready</span>
-      </div>
-      <button class="btn dash-use-btn" id="enterDestroyerBtn" type="button">Enter Destroyer</button>
-      <p class="stat-hint">+20 ACC/STR/AGL. Lasts 6 turns, once per match.</p>
-    </div>
   </div>
 </div>
 
@@ -3455,7 +3441,11 @@
     {id:'hoops',     label:'Hoops'},
     {id:'halves-v',  label:'Halves'},
     {id:'halves-h',  label:'Split'},
-    {id:'sash',      label:'Sash'}
+    {id:'sash',      label:'Sash'},
+    {id:'checkered', label:'Checkered'},
+    {id:'sides',     label:'Half-Circles'},
+    {id:'diagonal',  label:'Diagonal'},
+    {id:'dots',      label:'Dots'}
   ];
 
   // Picks readable black or white text for a pin's number based on its actual
@@ -3481,6 +3471,16 @@
       case 'halves-v':  return `linear-gradient(90deg, ${c1} 50%, ${c2} 50%)`;
       case 'halves-h':  return `linear-gradient(180deg, ${c1} 50%, ${c2} 50%)`;
       case 'sash':      return `linear-gradient(135deg, ${c1} 0 38%, ${c2} 38% 58%, ${c1} 58% 100%)`;
+      // Two 45deg gradients offset by half a tile — the classic CSS
+      // checkerboard trick — with the base kit color filling the rest.
+      case 'checkered': return `linear-gradient(45deg, ${c2} 25%, transparent 25%, transparent 75%, ${c2} 75%, ${c2}) 0 0/14px 14px, linear-gradient(45deg, ${c2} 25%, transparent 25%, transparent 75%, ${c2} 75%, ${c2}) 7px 7px/14px 14px, ${c1}`;
+      // One large lens-shaped bulge on each side, widest at the vertical
+      // middle and tapering to a point before reaching the top/bottom —
+      // leaves a persistent color-1 column down the center and color-1
+      // caps at the top and bottom, matching a classic side-panel kit.
+      case 'sides':     return `radial-gradient(ellipse 42% 47% at 0% 50%, ${c2} 0 92%, transparent 100%), radial-gradient(ellipse 42% 47% at 100% 50%, ${c2} 0 92%, transparent 100%), ${c1}`;
+      case 'diagonal':  return `repeating-linear-gradient(45deg, ${c1} 0 14%, ${c2} 14% 28%)`;
+      case 'dots':      return `radial-gradient(circle, ${c2} 0 4px, transparent 4.5px) 0 0/14px 14px, ${c1}`;
       default:          return c1;
     }
   }
@@ -3682,6 +3682,9 @@
     const z = getShotZone(pin);
     if (z.zone === 'box') return { available: true, debuff: 0, zone: 'box' };
     if (z.zone === 'zone2' || z.zone === 'zone3') {
+      // Predator Eyes — skips the MTL (Shots) gate entirely, straight to the
+      // shot roll with no debuff risk since that only comes from a failed roll.
+      if (pin.predatorReady) return { available: true, debuff: 0, zone: z.zone };
       const r = pin.mtlShotsResult;
       if (r && r.zone === z.zone) {
         const debuff = r.passed ? 0 : (z.zone === 'zone3' ? -10 : -5);
@@ -3901,23 +3904,31 @@
       p.dashCooldownChunks = 0;
       p.superSprintCharges = 1;
       p.superSprintCooldownChunks = 0;
-      p.metaDashCharges = 2;
-      p.metaDashCooldownChunks = 0;
-      p.talentActive = false;
-      p.talentUsesLeft = 10;
-      p.assassinClearUsed = false;
-      p.predatorActive = false;
-      p.predatorCharges = 4;
-      p.predatorLocked = false;
       p.mtlAttackNat1Penalty = false;
       p.flowActive = false;
       p.flowActivationCount = 0;
       p.flowTurnsLeft = 0;
       p.flowCooldownChunks = 0;
       p.flowLocked = false;
+      // Reworked Talented Eyes — full reset, same as everything else here
+      p.assassinZone = null;
+      p.assassinActiveChunksLeft = 0;
+      p.assassinCooldownChunks = 0;
+      p.sniperProtectedReady = false;
+      p.sniperProtectedPassActive = false;
+      p.sniperCooldownChunks = 0;
+      p.predatorReady = false;
+      p.predatorCooldownChunks = 0;
+      p.metaVisionActive = false;
+      p.metaVisionActiveChunksLeft = 0;
+      p.metaVisionCooldownChunks = 0;
       p.destroyerActive = false;
-      p.destroyerUsed = false;
-      p.destroyerTurnsLeft = 0;
+      p.destroyerActiveChunksLeft = 0;
+      p.destroyerCooldownChunks = 0;
+      p.destroyerDefenseFails = 0;
+      p.destroyerDribbleFails = 0;
+      p.destroyerLowSpdRolls = 0;
+      p.destroyerNat1Count = 0;
       p.accelerationLocked = false;
       p.freeMoveUnlocked = false;
       p.forwardOnlyMove = false;
@@ -4201,15 +4212,24 @@
 
   function resetSharedTalentState(pin){
     // switching talents clears any in-progress activation state from the old one
-    pin.predatorActive = false;
-    pin.predatorCharges = 4;
-    pin.predatorLocked = false;
-    pin.assassinClearUsed = false;
+    pin.assassinZone = null;
+    pin.assassinActiveChunksLeft = 0;
+    pin.assassinCooldownChunks = 0;
+    pin.sniperProtectedReady = false;
+    pin.sniperProtectedPassActive = false;
+    pin.sniperCooldownChunks = 0;
+    pin.predatorReady = false;
+    pin.predatorCooldownChunks = 0;
+    pin.metaVisionActive = false;
+    pin.metaVisionActiveChunksLeft = 0;
+    pin.metaVisionCooldownChunks = 0;
     pin.destroyerActive = false;
-    pin.destroyerUsed = false;
-    pin.destroyerTurnsLeft = 0;
-    pin.metaDashCharges = 2;
-    pin.metaDashCooldownChunks = 0;
+    pin.destroyerActiveChunksLeft = 0;
+    pin.destroyerCooldownChunks = 0;
+    pin.destroyerDefenseFails = 0;
+    pin.destroyerDribbleFails = 0;
+    pin.destroyerLowSpdRolls = 0;
+    pin.destroyerNat1Count = 0;
   }
 
   talentSelect.addEventListener('change', () => {
@@ -4343,13 +4363,20 @@
     freeMoveUnlocked: false, dashCharges: 2, dashCooldownChunks: 0, speedster: false,
     talent: null, talentActive: false, talentUsesLeft: 10, assassinClearUsed: false,
     talent2: null, talent2Active: false, talent2UsesLeft: 10, // second talent slot for dual-eyes characters — its own independent activation and charges
-    predatorActive: false, predatorCharges: 4, predatorLocked: false,
     superSprintCharges: 1, superSprintCooldownChunks: 0,
-    metaDashCharges: 2, metaDashCooldownChunks: 0, forwardOnlyMove: false,
+    forwardOnlyMove: false,
+    // ---- Reworked Talented Eyes (playwise traits, each its own independent
+    // activate/cooldown cycle, no per-match cap) ----
+    assassinZone: null, // { x, y, radius } in field %/px while the zone is on the field, else null
+    assassinActiveChunksLeft: 0, assassinCooldownChunks: 0,
+    sniperProtectedReady: false, sniperProtectedPassActive: false, sniperCooldownChunks: 0,
+    predatorReady: false, predatorCooldownChunks: 0,
+    metaVisionActive: false, metaVisionActiveChunksLeft: 0, metaVisionCooldownChunks: 0,
+    destroyerActive: false, destroyerActiveChunksLeft: 0, destroyerCooldownChunks: 0,
+    destroyerDefenseFails: 0, destroyerDribbleFails: 0, destroyerLowSpdRolls: 0, destroyerNat1Count: 0,
     npc: false, npcPosition: 'Attackers', npcTeamId: null,
     flowActive: false, flowColor: '#1e8fff', flowActivationCount: 0, flowTurnsLeft: 0,
     flowCooldownChunks: 0, flowLocked: false,
-    destroyerActive: false, destroyerUsed: false, destroyerTurnsLeft: 0,
     weapon: false, weaponStat: 'ACC', weaponBuffStat: null, // Weapon: persistent stat selector, one-time +3 on next roll of that stat when used
     specialty1: null, specialty2: null,
     dribbleStreak: 0, // Rhythm Dribbler
@@ -4793,7 +4820,34 @@
     });
 
     renderShots();
+    renderAssassinZones();
     renderBench();
+  }
+
+  // Draws each active Assassin Eyes zone as a plain positioned circle (not
+  // an SVG shape in the 0-100 shot-layer viewBox, which stretches non-
+  // uniformly and would render an ellipse) — same left/top-percentage +
+  // pixel-diameter approach already used for pins themselves, so it's a
+  // true circle regardless of the field's own aspect ratio.
+  function renderAssassinZones(){
+    const layer = document.getElementById('assassinZoneLayer');
+    if (!layer) return;
+    layer.innerHTML = '';
+    pins.forEach(p => {
+      if (!p.assassinZone) return;
+      const zone = p.assassinZone;
+      const dot = document.createElement('div');
+      dot.style.position = 'absolute';
+      dot.style.left = zone.x + '%';
+      dot.style.top = zone.y + '%';
+      dot.style.width = (zone.radius * 2) + 'px';
+      dot.style.height = (zone.radius * 2) + 'px';
+      dot.style.transform = 'translate(-50%, -50%)';
+      dot.style.borderRadius = '50%';
+      dot.style.background = 'rgba(255, 140, 0, 0.25)';
+      dot.style.border = '2px solid rgba(255, 140, 0, 0.5)';
+      layer.appendChild(dot);
+    });
   }
 
   // ---- ball drag ----
@@ -5108,20 +5162,62 @@
     if (!aimingType && !subState) document.removeEventListener('keydown', onAimKeydown);
   }
 
+  // ---- Assassin Eyes zone placement — click the field to drop the circle ----
+  let assassinPlacingPinId = null;
+
+  function startAssassinPlacing(pinId){
+    assassinPlacingPinId = pinId;
+    closePlayMenu();
+    field.classList.add('aiming');
+    aimHintText.textContent = 'Assassin Eyes — click the field to drop the zone — Esc to cancel';
+    aimHint.classList.remove('hidden');
+    document.addEventListener('keydown', onAimKeydown);
+  }
+
+  function cancelAssassinPlacing(){
+    assassinPlacingPinId = null;
+    field.classList.remove('aiming');
+    if (!aimingType && !challengeState && !subState) aimHint.classList.add('hidden');
+    if (!aimingType && !challengeState && !subState) document.removeEventListener('keydown', onAimKeydown);
+  }
+
   function onAimKeydown(e){
     if (e.key !== 'Escape') return;
     cancelAiming();
     cancelChallenge();
     cancelSub();
+    cancelAssassinPlacing();
   }
 
   document.getElementById('aimCancelBtn').addEventListener('click', () => {
     cancelAiming();
     cancelChallenge();
     cancelSub();
+    cancelAssassinPlacing();
   });
 
   function onFieldAimCapture(e){
+    if (assassinPlacingPinId !== null) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const pin = pins.find(p => p.id === assassinPlacingPinId);
+      const pinId = assassinPlacingPinId;
+      cancelAssassinPlacing();
+      if (!pin) return;
+      const rect = field.getBoundingClientRect();
+      let x = ((e.clientX - rect.left) / rect.width) * 100;
+      let y = ((e.clientY - rect.top) / rect.height) * 100;
+      x = Math.max(1, Math.min(99, x));
+      y = Math.max(1, Math.min(99, y));
+      pin.assassinZone = { x, y, radius: assassinZoneRadiusPx() };
+      pin.assassinActiveChunksLeft = 3;
+      markDirty();
+      if (activePinId === pinId) refreshTalentTab(pin);
+      renderPins();
+      return;
+    }
+
     if (aimingType) {
       if (e.button !== 0) return;
       e.preventDefault();
@@ -5525,10 +5621,8 @@
       pin.flowTurnsLeft -= 1;
       if (pin.flowTurnsLeft <= 0) endFlow(pin);
     }
-    if (pin.destroyerActive) {
-      pin.destroyerTurnsLeft -= 1;
-      if (pin.destroyerTurnsLeft <= 0) pin.destroyerActive = false;
-    }
+    // Destroyer Eyes' active duration now ticks per-chunk (tickDashCooldowns),
+    // same as Assassin/Meta-Vision, not per-move.
     if (pin.nutmegMovesRemaining > 0) pin.nutmegMovesRemaining -= 1; // Nutmeg Specialist — counts down with each actual move
 
     if (pin.ballCarrier && ball.active) {
@@ -5676,11 +5770,6 @@
   const superSprintStatusText = document.getElementById('superSprintStatusText');
   const useSuperSprintBtn = document.getElementById('useSuperSprintBtn');
 
-  const metaDashSection = document.getElementById('metaDashSection');
-  const metaDashPips = document.getElementById('metaDashPips');
-  const metaDashStatusText = document.getElementById('metaDashStatusText');
-  const useMetaDashBtn = document.getElementById('useMetaDashBtn');
-
   function refreshDashDisplay(pin){
     dashPips.innerHTML = '';
     for (let i = 0; i < 2; i++) {
@@ -5712,26 +5801,6 @@
       } else {
         superSprintStatusText.textContent = 'Recharges in ' + pin.superSprintCooldownChunks + ' chunk' + (pin.superSprintCooldownChunks === 1 ? '' : 's');
         useSuperSprintBtn.disabled = true;
-      }
-    }
-
-    metaDashSection.style.display = pinHasTalent(pin, 'Meta-Vision') ? 'block' : 'none';
-    if (pinHasTalent(pin, 'Meta-Vision')) {
-      metaDashPips.innerHTML = '';
-      for (let i = 0; i < 2; i++) {
-        const pip = document.createElement('span');
-        pip.className = 'dash-pip' + (i < pin.metaDashCharges ? ' filled' : (pin.metaDashCooldownChunks > 0 ? ' cooldown' : ''));
-        metaDashPips.appendChild(pip);
-      }
-      if (!isTalentActive(pin, 'Meta-Vision')) {
-        metaDashStatusText.textContent = 'Activate Meta-Vision first';
-        useMetaDashBtn.disabled = true;
-      } else if (pin.metaDashCharges > 0) {
-        metaDashStatusText.textContent = pin.metaDashCharges + ' / 2 ready';
-        useMetaDashBtn.disabled = false;
-      } else {
-        metaDashStatusText.textContent = 'Used up for this match';
-        useMetaDashBtn.disabled = true;
       }
     }
   }
@@ -5809,32 +5878,7 @@
     spawnSuperSprintEffect(pin);
   });
 
-  useMetaDashBtn.addEventListener('click', () => {
-    const pin = pins.find(p => p.id === activePinId);
-    if (!pin) return;
-    const slotKey = pin.talent === 'Meta-Vision' ? 'talent' : (pin.talent2 === 'Meta-Vision' ? 'talent2' : null);
-    if (!slotKey || !pin[slotKey + 'Active']) return;
-    if (pin.metaDashCharges <= 0 || pin[slotKey + 'UsesLeft'] <= 0) return;
-    pin.metaDashCharges -= 1;
-    pin[slotKey + 'UsesLeft'] -= 1; // Meta Dash also spends 1 of that slot's shared 10 Meta-Vision uses
-    if (pin[slotKey + 'UsesLeft'] <= 0) pin[slotKey + 'Active'] = false;
-    pin.radiusMult = 1.5; // weaker than Acceleration (2), stronger than a normal move (1)
-    pin.forwardOnlyMove = false;
-    // no cooldown — once both charges are gone, they stay gone until End Match
-    refreshDashDisplay(pin);
-    refreshTalentTab(pin);
-    renderPins();
-    spawnDashEffect(pin);
-  });
-
   const statInputs = {};
-
-  // ---- Talent effect config ----
-  const SIMPLE_TALENT_STATS = {
-    'Sniper Eyes': { stats: ['ACC', 'MTL'], bonus: 10 },
-    'Assassin Eyes': { stats: ['STR'], bonus: 10 },
-    'Meta-Vision': { stats: ['AGL', 'MTL', 'STR'], bonus: 10 }
-  };
 
   // True if either talent slot holds this talent — lets every existing
   // single-talent check keep working correctly regardless of which slot
@@ -5858,27 +5902,10 @@
   function applyTalentBuff(pin, statKey){
     let bonus = 0;
 
-    const simple1 = pin.talent && SIMPLE_TALENT_STATS[pin.talent];
-    if (simple1 && pin.talentActive && pin.talentUsesLeft > 0 && simple1.stats.includes(statKey)) {
-      bonus += simple1.bonus;
-      pin.talentUsesLeft -= 1;
-      if (pin.talentUsesLeft <= 0) pin.talentActive = false;
-    }
-
-    const simple2 = pin.talent2 && SIMPLE_TALENT_STATS[pin.talent2];
-    if (simple2 && pin.talent2Active && pin.talent2UsesLeft > 0 && simple2.stats.includes(statKey)) {
-      bonus += simple2.bonus;
-      pin.talent2UsesLeft -= 1;
-      if (pin.talent2UsesLeft <= 0) pin.talent2Active = false;
-    }
-
-    if (pinHasTalent(pin, 'Predator Eyes') && pin.predatorActive && statKey === 'ACC') {
-      bonus += 15;
-    }
-
-    if (pinHasTalent(pin, 'Destroyer Eyes') && pin.destroyerActive && (statKey === 'ACC' || statKey === 'STR' || statKey === 'AGL')) {
-      bonus += 20;
-    }
+    // Sniper/Assassin/Predator/Meta-Vision/Destroyer no longer grant flat
+    // stat bonuses here — they're all playwise traits now, resolved at their
+    // own point of use (proximity checks, shot-zone gating, movement radius,
+    // opponent debuffs) rather than as a generic roll bonus.
 
     if (pin.weapon && pin.weaponBuffStat === statKey) {
       bonus += 3;
@@ -5893,16 +5920,59 @@
     return bonus;
   }
 
+  // Radius (in on-screen px) of an Assassin Eyes zone — same reach as that
+  // pin's own Dash move, snapshotted at the moment the zone is placed.
+  function assassinZoneRadiusPx(){
+    return getPinDiameterPx() * 2.25;
+  }
+
+  function isInsideAssassinZone(pin, zone){
+    if (!zone) return false;
+    return fieldDistancePx(pin.x, pin.y, zone.x, zone.y) <= zone.radius;
+  }
+
   // Opponent-facing debuffs applied to a CHALLENGER's roll based on the TARGET's active talents.
   function getOpponentTalentDebuff(challenger, target){
     let debuff = 0;
-    if (isTalentActive(target, 'Meta-Vision') && !isTalentActive(challenger, 'Meta-Vision')) {
-      debuff -= 5; // -5 STR/AGL against them unless the challenger also has Meta-Vision active
-    }
     if (pinHasTalent(target, 'Destroyer Eyes') && target.destroyerActive) {
       debuff -= 5; // -5 to all defensive rolls in a 1v1 against them
     }
+    // Assassin Eyes — anyone standing inside the zone's owner's own zone takes
+    // -3 to all stats in a challenge against that owner specifically.
+    if (pinHasTalent(target, 'Assassin Eyes') && target.assassinZone && isInsideAssassinZone(challenger, target.assassinZone)) {
+      debuff -= 3;
+    }
     return debuff;
+  }
+
+  // ---- Destroyer Eyes activation — first of 4 counters to hit its
+  // threshold unlocks it, whichever happens first. Reset to 0 whenever it
+  // actually activates, so it doesn't re-trigger instantly off stale progress
+  // the moment its cooldown ends.
+  const DESTROYER_THRESHOLDS = { destroyerDefenseFails: 5, destroyerDribbleFails: 5, destroyerLowSpdRolls: 8, destroyerNat1Count: 2 };
+
+  function destroyerIsReady(pin){
+    return pin.destroyerDefenseFails >= DESTROYER_THRESHOLDS.destroyerDefenseFails
+      || pin.destroyerDribbleFails >= DESTROYER_THRESHOLDS.destroyerDribbleFails
+      || pin.destroyerLowSpdRolls >= DESTROYER_THRESHOLDS.destroyerLowSpdRolls
+      || pin.destroyerNat1Count >= DESTROYER_THRESHOLDS.destroyerNat1Count;
+  }
+
+  function activateDestroyer(pin){
+    pin.destroyerActive = true;
+    pin.destroyerActiveChunksLeft = 3;
+    pin.destroyerDefenseFails = 0;
+    pin.destroyerDribbleFails = 0;
+    pin.destroyerLowSpdRolls = 0;
+    pin.destroyerNat1Count = 0;
+    markDirty();
+  }
+
+  // Any natural 1, on any roll, counts toward Destroyer Eyes — call this from
+  // every place a d20 is actually rolled for a pin that holds the talent.
+  function trackDestroyerNat1(pin, roll){
+    if (roll !== 1 || !pinHasTalent(pin, 'Destroyer Eyes') || pin.destroyerActive) return;
+    pin.destroyerNat1Count = (pin.destroyerNat1Count || 0) + 1;
   }
 
   // ---- Talent tab (Sniper / Assassin / Meta-Vision / Predator / Destroyer note) ----
@@ -5913,9 +5983,11 @@
   const specialtyActionSlotEl = document.getElementById('specialtyActionSlot');
 
   const TALENT_EFFECT_NOTES = {
-    'Sniper Eyes': '+10 ACC, +10 MTL while active. 10 shared uses per match, drained by each buffed roll.',
-    'Assassin Eyes': '+10 STR while active. 10 uses per match, drained by each buffed roll.',
-    'Meta-Vision': '+10 AGL/MTL/STR while active, opponents take -5 STR/AGL against you (unless they also have Meta-Vision on), and activating grants +2 Dash charges. 10 uses per match.'
+    'Sniper Eyes': 'Your next pass cannot be intercepted. Consumed the moment that pass is made, then a 3-chunk cooldown.',
+    'Assassin Eyes': 'Click the field to drop a zone (same reach as your Dash) for 3 chunks, then a 3-chunk cooldown. Enemies inside take -3 to all stats against you. While you’re inside it, Intercept/Block/Tackle/Slide Tackle work within 1.5x a pin’s width of the ball carrier, ignoring each action’s normal range.',
+    'Predator Eyes': 'Your next shot attempt in Zone 2/3 skips the MTL (Shots) roll entirely — straight to ACC (Shot), no debuff risk. Consumed on that shot, then a 3-chunk cooldown.',
+    'Meta-Vision': 'While active: an Acceleration (SPD) roll of 11+ gets an extra +0.3x move radius, and your Intercept/Block/Tackle/Slide Tackle range is widened by 0.2x. 3 chunks active, then a 3-chunk cooldown.',
+    'Destroyer Eyes': 'Unlocks the first time you hit any one of the counters below. Once active (3 chunks, then a 5-chunk cooldown): anyone challenging you takes -5 to all stats against you, and anyone who fails to win the ball off you has a 50/50 chance of being charged 2 actions instead of 1.'
   };
 
   function renderPipRow(container, filled, total){
@@ -5929,14 +6001,31 @@
 
   // Builds one talent slot's UI dynamically based on whichever talent actually
   // occupies it — slotKey is 'talent' (slot 1) or 'talent2' (slot 2). Returns
-  // null if that slot is empty. Predator/Destroyer/Assassin's special state
-  // (predatorActive, etc.) is shared regardless of slot, since a pin can only
+  // null if that slot is empty. Each Eye's activation state (assassinZone,
+  // predatorReady, etc.) is shared regardless of slot, since a pin can only
   // meaningfully hold each specific talent once.
+  function addStatusLine(wrap, text){
+    const status = document.createElement('div');
+    status.className = 'dash-status';
+    const statusText = document.createElement('span');
+    statusText.className = 'dash-status-text';
+    statusText.textContent = text;
+    status.appendChild(statusText);
+    wrap.appendChild(status);
+  }
+
+  function addActivateButton(wrap, label, onClick){
+    const btn = document.createElement('button');
+    btn.className = 'btn dash-use-btn';
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.addEventListener('click', onClick);
+    wrap.appendChild(btn);
+  }
+
   function buildTalentSlotContent(pin, slotKey){
     const talentName = pin[slotKey];
     if (!talentName) return null;
-    const activeKey = slotKey + 'Active';
-    const usesKey = slotKey + 'UsesLeft';
 
     const wrap = document.createElement('div');
     const nameEl = document.createElement('p');
@@ -5944,129 +6033,89 @@
     nameEl.textContent = talentName;
     wrap.appendChild(nameEl);
 
-    if (talentName === 'Destroyer Eyes') {
-      const note = document.createElement('p');
-      note.className = 'stat-hint';
-      note.textContent = 'Only activates through Flow \u2014 see below.';
-      wrap.appendChild(note);
-      return wrap;
-    }
-
-    if (talentName === 'Predator Eyes') {
-      const status = document.createElement('div');
-      status.className = 'dash-status';
-      const pips = document.createElement('div');
-      pips.className = 'dash-pips';
-      renderPipRow(pips, pin.predatorCharges, 4);
-      const statusText = document.createElement('span');
-      statusText.className = 'dash-status-text';
-      status.appendChild(pips);
-      status.appendChild(statusText);
-      wrap.appendChild(status);
-
-      if (pin.predatorLocked) {
-        statusText.textContent = 'Locked (scored with it)';
-      } else if (pin.predatorActive) {
-        statusText.textContent = 'Active \u2014 ' + pin.predatorCharges + ' / 4 left';
-        const askP = document.createElement('p');
-        askP.className = 'stat-hint';
-        askP.textContent = 'Predator Eye is active. Did you score with it?';
-        wrap.appendChild(askP);
-        const btnRow = document.createElement('div');
-        btnRow.className = 'team-stats-header-actions';
-        btnRow.style.justifyContent = 'stretch';
-        btnRow.style.gap = '8px';
-        const yesBtn = document.createElement('button');
-        yesBtn.className = 'btn'; yesBtn.type = 'button'; yesBtn.style.flex = '1';
-        yesBtn.textContent = 'Yes \u2014 Lock It';
-        yesBtn.addEventListener('click', () => {
-          pin.predatorActive = false;
-          pin.predatorLocked = true; // scored with it — locked for the rest of the match
-          refreshTalentTab(pin);
-          renderPins();
-        });
-        const noBtn = document.createElement('button');
-        noBtn.className = 'btn'; noBtn.type = 'button'; noBtn.style.flex = '1';
-        noBtn.textContent = 'No \u2014 Keep Unlocked';
-        noBtn.addEventListener('click', () => {
-          pin.predatorActive = false; // stays unlocked — can activate again if charges remain
-          refreshTalentTab(pin);
-          renderPins();
-        });
-        btnRow.appendChild(yesBtn);
-        btnRow.appendChild(noBtn);
-        wrap.appendChild(btnRow);
+    if (talentName === 'Assassin Eyes') {
+      if (pin.assassinZone) {
+        addStatusLine(wrap, 'Zone active — ' + pin.assassinActiveChunksLeft + ' chunk' + (pin.assassinActiveChunksLeft === 1 ? '' : 's') + ' left');
+      } else if (pin.assassinCooldownChunks > 0) {
+        addStatusLine(wrap, 'Cooldown — ' + pin.assassinCooldownChunks + ' chunk' + (pin.assassinCooldownChunks === 1 ? '' : 's') + ' left');
       } else {
-        statusText.textContent = pin.predatorCharges + ' / 4 left';
-        if (pin.predatorCharges > 0) {
-          const activateBtn = document.createElement('button');
-          activateBtn.className = 'btn dash-use-btn';
-          activateBtn.type = 'button';
-          activateBtn.textContent = 'Activate Predator Eye';
-          activateBtn.addEventListener('click', () => {
-            pin.predatorActive = true;
-            pin.predatorCharges -= 1;
-            refreshTalentTab(pin);
-            renderPins();
-          });
-          wrap.appendChild(activateBtn);
-        }
+        addStatusLine(wrap, 'Ready');
+        addActivateButton(wrap, 'Drop Zone', () => startAssassinPlacing(pin.id));
       }
-      const note = document.createElement('p');
-      note.className = 'stat-hint';
-      note.textContent = '+15 ACC while active. 4 activations per match, or locked forever the moment you confirm a goal with it.';
-      wrap.appendChild(note);
-      return wrap;
+    } else if (talentName === 'Sniper Eyes') {
+      if (pin.sniperProtectedReady) {
+        addStatusLine(wrap, 'Armed — your next pass is protected');
+      } else if (pin.sniperCooldownChunks > 0) {
+        addStatusLine(wrap, 'Cooldown — ' + pin.sniperCooldownChunks + ' chunk' + (pin.sniperCooldownChunks === 1 ? '' : 's') + ' left');
+      } else {
+        addStatusLine(wrap, 'Ready');
+        addActivateButton(wrap, 'Activate Protected Pass', () => {
+          // Re-fetch by id rather than mutating the closed-over `pin` — a
+          // multiplayer sync merge can swap in a fresh pin object for this
+          // id while the panel sits open, which would silently activate a
+          // now-orphaned copy that nothing else reads.
+          const live = pins.find(p => p.id === pin.id) || pin;
+          live.sniperProtectedReady = true;
+          refreshTalentTab(live);
+          markDirty();
+        });
+      }
+    } else if (talentName === 'Predator Eyes') {
+      if (pin.predatorReady) {
+        addStatusLine(wrap, 'Armed — next shot in Zone 2/3 skips MTL (Shots)');
+      } else if (pin.predatorCooldownChunks > 0) {
+        addStatusLine(wrap, 'Cooldown — ' + pin.predatorCooldownChunks + ' chunk' + (pin.predatorCooldownChunks === 1 ? '' : 's') + ' left');
+      } else {
+        addStatusLine(wrap, 'Ready');
+        addActivateButton(wrap, 'Activate Predator Eye', () => {
+          const live = pins.find(p => p.id === pin.id) || pin;
+          live.predatorReady = true;
+          refreshTalentTab(live);
+          refreshD20Locks(live);
+          markDirty();
+        });
+      }
+    } else if (talentName === 'Meta-Vision') {
+      if (pin.metaVisionActive) {
+        addStatusLine(wrap, 'Active — ' + pin.metaVisionActiveChunksLeft + ' chunk' + (pin.metaVisionActiveChunksLeft === 1 ? '' : 's') + ' left');
+      } else if (pin.metaVisionCooldownChunks > 0) {
+        addStatusLine(wrap, 'Cooldown — ' + pin.metaVisionCooldownChunks + ' chunk' + (pin.metaVisionCooldownChunks === 1 ? '' : 's') + ' left');
+      } else {
+        addStatusLine(wrap, 'Ready');
+        addActivateButton(wrap, 'Activate Meta-Vision', () => {
+          const live = pins.find(p => p.id === pin.id) || pin;
+          live.metaVisionActive = true;
+          live.metaVisionActiveChunksLeft = 3;
+          refreshTalentTab(live);
+          renderPins();
+          markDirty();
+        });
+      }
+    } else if (talentName === 'Destroyer Eyes') {
+      if (pin.destroyerActive) {
+        addStatusLine(wrap, 'Active — ' + pin.destroyerActiveChunksLeft + ' chunk' + (pin.destroyerActiveChunksLeft === 1 ? '' : 's') + ' left');
+      } else if (pin.destroyerCooldownChunks > 0) {
+        addStatusLine(wrap, 'Cooldown — ' + pin.destroyerCooldownChunks + ' chunk' + (pin.destroyerCooldownChunks === 1 ? '' : 's') + ' left');
+      } else if (destroyerIsReady(pin)) {
+        addStatusLine(wrap, 'Unlocked!');
+        addActivateButton(wrap, 'Unleash Destroyer', () => {
+          const live = pins.find(p => p.id === pin.id) || pin;
+          activateDestroyer(live);
+          refreshTalentTab(live);
+          renderPins();
+        });
+      } else {
+        const progress = document.createElement('p');
+        progress.className = 'stat-hint';
+        progress.textContent = 'Losses: ' + pin.destroyerDefenseFails + '/5 · Dribble fails: ' + pin.destroyerDribbleFails + '/5 · Low SPD (1-10): ' + pin.destroyerLowSpdRolls + '/8 · Nat 1s: ' + pin.destroyerNat1Count + '/2';
+        wrap.appendChild(progress);
+      }
     }
-
-    // Sniper Eyes / Assassin Eyes / Meta-Vision
-    const status = document.createElement('div');
-    status.className = 'dash-status';
-    const pips = document.createElement('div');
-    pips.className = 'dash-pips';
-    renderPipRow(pips, pin[usesKey], 10);
-    const statusText = document.createElement('span');
-    statusText.className = 'dash-status-text';
-    statusText.textContent = pin[usesKey] + ' / 10 left';
-    status.appendChild(pips);
-    status.appendChild(statusText);
-    wrap.appendChild(status);
-
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'btn dash-use-btn';
-    toggleBtn.type = 'button';
-    toggleBtn.disabled = pin[usesKey] <= 0;
-    toggleBtn.textContent = pin[usesKey] <= 0 ? 'Used Up' : (pin[activeKey] ? 'Deactivate' : 'Activate');
-    toggleBtn.classList.toggle('active', pin[activeKey]);
-    toggleBtn.addEventListener('click', () => {
-      if (pin[usesKey] <= 0) return;
-      pin[activeKey] = !pin[activeKey];
-      refreshTalentTab(pin);
-      refreshDashDisplay(pin); // Meta Dash section availability depends on talentActive
-      renderPins();
-    });
-    wrap.appendChild(toggleBtn);
 
     const note = document.createElement('p');
     note.className = 'stat-hint';
     note.textContent = TALENT_EFFECT_NOTES[talentName] || '';
     wrap.appendChild(note);
-
-    if (talentName === 'Assassin Eyes') {
-      const clearBtn = document.createElement('button');
-      clearBtn.className = 'btn dash-use-btn';
-      clearBtn.type = 'button';
-      clearBtn.disabled = pin.assassinClearUsed;
-      clearBtn.textContent = pin.assassinClearUsed ? 'Ball Cleared (used)' : 'Clear the Ball';
-      clearBtn.addEventListener('click', () => {
-        if (pin.assassinClearUsed) return;
-        pin.assassinClearUsed = true;
-        pins.forEach(p => { p.ballCarrier = false; }); // instantly clear the ball — loose ball, no one carries it
-        refreshTalentTab(pin);
-        renderPins();
-      });
-      wrap.appendChild(clearBtn);
-    }
 
     return wrap;
   }
@@ -6233,9 +6282,6 @@
   const flowStatusText = document.getElementById('flowStatusText');
   const flowToggleBtn = document.getElementById('flowToggleBtn');
   const flowSwatches = document.getElementById('flowSwatches');
-  const destroyerSection = document.getElementById('destroyerSection');
-  const destroyerStatusText = document.getElementById('destroyerStatusText');
-  const enterDestroyerBtn = document.getElementById('enterDestroyerBtn');
 
   COLORS.forEach(color => {
     const sw = document.createElement('div');
@@ -6277,27 +6323,6 @@
       flowToggleBtn.disabled = false;
     }
 
-    const showDestroyer = pinHasTalent(pin, 'Destroyer Eyes');
-    destroyerSection.style.display = showDestroyer ? 'block' : 'none';
-    if (showDestroyer) {
-      if (pin.destroyerActive) {
-        destroyerStatusText.textContent = 'Active \u2014 ' + pin.destroyerTurnsLeft + ' turn' + (pin.destroyerTurnsLeft === 1 ? '' : 's') + ' left';
-        enterDestroyerBtn.textContent = 'Destroyer Active';
-        enterDestroyerBtn.disabled = true;
-      } else if (pin.destroyerUsed) {
-        destroyerStatusText.textContent = 'Locked \u2014 already used this match';
-        enterDestroyerBtn.textContent = 'Locked';
-        enterDestroyerBtn.disabled = true;
-      } else if (!pin.flowActive) {
-        destroyerStatusText.textContent = 'Needs Flow active first';
-        enterDestroyerBtn.textContent = 'Enter Destroyer';
-        enterDestroyerBtn.disabled = true;
-      } else {
-        destroyerStatusText.textContent = 'Ready';
-        enterDestroyerBtn.textContent = 'Enter Destroyer';
-        enterDestroyerBtn.disabled = false;
-      }
-    }
   }
 
   function endFlow(pin){
@@ -6306,9 +6331,6 @@
       pin.flowLocked = true;
     } else {
       pin.flowCooldownChunks = 5;
-    }
-    if (pin.destroyerActive) {
-      pin.destroyerActive = false; // Destroyer can't outlive Flow
     }
   }
 
@@ -6323,17 +6345,6 @@
       pin.flowTurnsLeft = pin.flowActivationCount === 1 ? 6 : 3;
       pin.flowActive = true;
     }
-    refreshFlowTab(pin);
-    renderPins();
-  });
-
-  enterDestroyerBtn.addEventListener('click', () => {
-    const pin = pins.find(p => p.id === activePinId);
-    if (!pin || !pinHasTalent(pin, 'Destroyer Eyes')) return;
-    if (!pin.flowActive || pin.destroyerUsed || pin.destroyerActive) return;
-    pin.destroyerActive = true;
-    pin.destroyerUsed = true;
-    pin.destroyerTurnsLeft = 6;
     refreshFlowTab(pin);
     renderPins();
   });
@@ -6484,11 +6495,13 @@
     // MTL (Shots): only relevant in Zone 2/3 (not needed in the box, not usable out of range)
     const zone = getShotZone(pin);
     const shotsRelevant = zone.zone === 'zone2' || zone.zone === 'zone3';
-    d20Buttons.mtl_shots.disabled = !shotsRelevant;
-    d20Buttons.mtl_shots.classList.toggle('locked', !shotsRelevant);
-    d20Notes.mtl_shots.textContent = !shotsRelevant
-      ? (zone.zone === 'box' ? 'Not needed \u2014 you\u2019re in the box' : 'Only used in Zone 2 / Zone 3')
-      : `No buffs \u2014 need D${zone.required}+ in this zone`;
+    d20Buttons.mtl_shots.disabled = !shotsRelevant || pin.predatorReady;
+    d20Buttons.mtl_shots.classList.toggle('locked', !shotsRelevant || pin.predatorReady);
+    d20Notes.mtl_shots.textContent = pin.predatorReady
+      ? 'Not needed \u2014 Predator Eye has this shot unlocked'
+      : !shotsRelevant
+        ? (zone.zone === 'box' ? 'Not needed \u2014 you\u2019re in the box' : 'Only used in Zone 2 / Zone 3')
+        : `No buffs \u2014 need D${zone.required}+ in this zone`;
 
     // ACC (Shooting): needs the ball (carried, or within reach for a volley),
     // and either the box or a passed/failed MTL(Shots) roll for this zone
@@ -6569,6 +6582,7 @@
 
   function rollD20(pin, rollId){
     const roll = Math.floor(Math.random() * 20) + 1;
+    trackDestroyerNat1(pin, roll);
 
     if (rollId === 'mtl_shots') {
       // raw d20 only — NO buffs
@@ -6607,6 +6621,11 @@
       const total = roll + buff + access.debuff;
       pin.diceResult = { label: isVolley ? 'ACC (Volley)' : 'ACC (Shot)', roll, buff: buff + access.debuff, total, boosted: access.debuff === 0 };
       pin.mtlShotsResult = null; // consumed — next shot attempt needs a fresh MTL(Shots) roll if still in Zone 2/3
+      // Predator Eyes — consumed the moment a shot is actually taken in Zone 2/3
+      if (pin.predatorReady && (access.zone === 'zone2' || access.zone === 'zone3')) {
+        pin.predatorReady = false;
+        pin.predatorCooldownChunks = 3;
+      }
       logEvent(pinLabel(pin) + (isVolley ? ' volleys on goal: ' : ' shot on goal: ') + total + ' (roll ' + roll + ')' + (specialtyNotes.length ? ' [' + specialtyNotes.join(', ') + ']' : ''));
       logDiceRoll(pin, roll, buff + access.debuff);
       renderPins();
@@ -6649,6 +6668,12 @@
     let boosted = false;
 
     if (rollId === 'spd') {
+      // Destroyer Eyes — a raw roll of 1-10 (regardless of buffs) counts
+      // toward its activation, same as the dribble/defense fail counters.
+      if (roll <= 10 && pinHasTalent(pin, 'Destroyer Eyes') && !pin.destroyerActive) {
+        pin.destroyerLowSpdRolls = (pin.destroyerLowSpdRolls || 0) + 1;
+      }
+
       if (roll === 1) {
         // Natural 1 — a genuinely botched plant: costs a dash charge, costs
         // the turn itself, and this pin doesn't move at all this attempt
@@ -6672,6 +6697,8 @@
           if (pinHasSpecialty(pin, 'sprint-specialist')) pin.radiusMult += 0.5;
         }
         boosted = true;
+        // Meta-Vision — an Acceleration roll of 11+ (which a natural 20 always is) gets an extra +0.3x
+        if (pin.metaVisionActive) pin.radiusMult += 0.3;
       } else if (total >= 11) {
         pin.radiusMult = 2;
         boosted = true;
@@ -6680,6 +6707,8 @@
           pin.radiusMult += 0.3;
           pin.explosiveStartUsedThisChunk = true;
         }
+        // Meta-Vision — an Acceleration roll of 11+ gets an extra +0.3x move radius
+        if (pin.metaVisionActive) pin.radiusMult += 0.3;
       } else {
         pin.radiusMult = 1;
       }
@@ -6692,6 +6721,13 @@
     renderPins();
 
     if (rollId === 'acc_pass') {
+      // Sniper Eyes — consumed the moment the protected pass is actually made
+      if (pin.sniperProtectedReady) {
+        pin.sniperProtectedReady = false;
+        pin.sniperProtectedPassActive = true;
+        pin.sniperCooldownChunks = 3;
+        refreshTalentTab(pin);
+      }
       // Nasty Pass fires on every pass; Long Ball Specialist's target pick only
       // fires when its own bonus above actually triggered (i.e. off cooldown).
       if (specialtyNotes.includes('Long Ball Specialist')) {
@@ -6969,34 +7005,65 @@
       return;
     }
 
+    // Sniper Eyes \u2014 a protected pass can't be intercepted at all, full stop.
+    if (defenseType === 'intercept') {
+      const protectedPin = pins.find(p => p.sniperProtectedPassActive);
+      if (protectedPin) {
+        protectedPin.sniperProtectedPassActive = false; // shield used \u2014 one attempt is all it blocks
+        markDirty();
+        showToast('Protected pass \u2014 can\u2019t be intercepted.', 'error');
+        renderPins();
+        return;
+      }
+    }
+
     const pinPx = getPinDiameterPx();
     let valid = false;
     let failReason = '';
 
-    if (defenseType === 'block') {
-      const dPin = fieldDistancePx(challenger.x, challenger.y, target.x, target.y);
-      const dBall = ball.active ? fieldDistancePx(challenger.x, challenger.y, ball.x, ball.y) : Infinity;
-      valid = dPin <= pinPx * 1 || dBall <= pinPx * 1;
-      failReason = 'Too far \u2014 need to be touching the target or the ball';
-    } else if (defenseType === 'tackle') {
-      if (!target.ballCarrier) {
+    // Assassin Eyes \u2014 while standing inside your own zone, Intercept/Block/
+    // Tackle/Slide Tackle work off distance to the ball CARRIER (1.5x a pin's
+    // width) instead of each action's own normal target/ball rule.
+    const assassinBypass = defenseType !== 'dribble'
+      && pinHasTalent(challenger, 'Assassin Eyes') && challenger.assassinZone
+      && isInsideAssassinZone(challenger, challenger.assassinZone);
+    const carrier = getCarrierPin();
+    if (assassinBypass && carrier) {
+      valid = fieldDistancePx(challenger.x, challenger.y, carrier.x, carrier.y) <= pinPx * 1.75;
+      failReason = 'Too far from the ball carrier, even inside your zone';
+      if (defenseType === 'tackle' && !target.ballCarrier) {
+        valid = false;
         failReason = 'Tackle needs a target that\u2019s carrying the ball';
-      } else {
-        valid = fieldDistancePx(challenger.x, challenger.y, target.x, target.y) <= pinPx * 1;
-        failReason = 'Too far \u2014 need to be touching the ball carrier';
       }
-    } else if (defenseType === 'slide') {
-      valid = fieldDistancePx(challenger.x, challenger.y, target.x, target.y) <= pinPx * 1;
-      failReason = 'Too far \u2014 need to be touching the target';
-    } else if (defenseType === 'intercept') {
-      valid = ball.active && fieldDistancePx(challenger.x, challenger.y, ball.x, ball.y) <= pinPx * 1;
-      failReason = 'Too far \u2014 need to be touching the ball';
-    } else if (defenseType === 'dribble') {
-      if (!challenger.ballCarrier) {
-        failReason = 'You need the ball to try dribbling past someone';
-      } else {
-        valid = fieldDistancePx(challenger.x, challenger.y, target.x, target.y) <= pinPx * 1;
-        failReason = 'Too far \u2014 need to be touching the defender';
+    } else {
+      // Meta-Vision widens the normal proximity requirement by 0.2x.
+      const rangeMult = (defenseType !== 'dribble' && challenger.metaVisionActive) ? 1.2 : 1;
+
+      if (defenseType === 'block') {
+        const dPin = fieldDistancePx(challenger.x, challenger.y, target.x, target.y);
+        const dBall = ball.active ? fieldDistancePx(challenger.x, challenger.y, ball.x, ball.y) : Infinity;
+        valid = dPin <= pinPx * rangeMult || dBall <= pinPx * rangeMult;
+        failReason = 'Too far \u2014 need to be touching the target or the ball';
+      } else if (defenseType === 'tackle') {
+        if (!target.ballCarrier) {
+          failReason = 'Tackle needs a target that\u2019s carrying the ball';
+        } else {
+          valid = fieldDistancePx(challenger.x, challenger.y, target.x, target.y) <= pinPx * rangeMult;
+          failReason = 'Too far \u2014 need to be touching the ball carrier';
+        }
+      } else if (defenseType === 'slide') {
+        valid = fieldDistancePx(challenger.x, challenger.y, target.x, target.y) <= pinPx * rangeMult;
+        failReason = 'Too far \u2014 need to be touching the target';
+      } else if (defenseType === 'intercept') {
+        valid = ball.active && fieldDistancePx(challenger.x, challenger.y, ball.x, ball.y) <= pinPx * rangeMult;
+        failReason = 'Too far \u2014 need to be touching the ball';
+      } else if (defenseType === 'dribble') {
+        if (!challenger.ballCarrier) {
+          failReason = 'You need the ball to try dribbling past someone';
+        } else {
+          valid = fieldDistancePx(challenger.x, challenger.y, target.x, target.y) <= pinPx * 1;
+          failReason = 'Too far \u2014 need to be touching the defender';
+        }
       }
     }
 
@@ -7728,6 +7795,7 @@
     if (!target) { renderPins(); return; }
 
     const cRoll = Math.floor(Math.random() * 20) + 1;
+    trackDestroyerNat1(pin, cRoll);
     const cTotal = cRoll + offer.cBuff;
     const label = CHALLENGE_LABELS[offer.defenseType];
     const won = cTotal > offer.targetTotal;
@@ -7762,6 +7830,7 @@
 
     const challengerStatKey = (defenseType === 'intercept' || defenseType === 'dribble') ? 'AGL' : 'STR';
     const cRoll = Math.floor(Math.random() * 20) + 1;
+    trackDestroyerNat1(challenger, cRoll);
 
     // Ball Winner — Tackle and Block no longer trigger the natural-1 auto-foul for this pin
     const foulImmune = pinHasSpecialty(challenger, 'ball-winner') && (defenseType === 'block' || defenseType === 'tackle');
@@ -7773,6 +7842,7 @@
     }
 
     const tRoll = Math.floor(Math.random() * 20) + 1;
+    trackDestroyerNat1(target, tRoll);
     const cOpponentDebuff = getOpponentTalentDebuff(challenger, target); // from target's active talents
     const tOpponentDebuff = getOpponentTalentDebuff(target, challenger); // from challenger's active talents
     let cBuff = getPinStat(challenger, challengerStatKey) + applyTalentBuff(challenger, challengerStatKey) + cOpponentDebuff;
@@ -7813,6 +7883,18 @@
     logDiceRoll(target, tRoll, tBuff);
 
     if (!challengerWins) {
+      // Destroyer Eyes activation progress — the CHALLENGER is the one who
+      // just failed the action, regardless of which side has the talent.
+      if (pinHasTalent(challenger, 'Destroyer Eyes') && !challenger.destroyerActive) {
+        if (defenseType === 'dribble') challenger.destroyerDribbleFails = (challenger.destroyerDribbleFails || 0) + 1;
+        else challenger.destroyerDefenseFails = (challenger.destroyerDefenseFails || 0) + 1;
+      }
+      // Destroyer Eyes trait — target's Destroyer is active, challenger just
+      // failed to win the ball off them: 50/50 chance of an extra action cost.
+      if (pinHasTalent(target, 'Destroyer Eyes') && target.destroyerActive && Math.random() < 0.5) {
+        challenger.actions = Math.max(0, challenger.actions - 1);
+      }
+
       if (defenseType === 'dribble') {
         challenger.dribbleStreak = 0; // Rhythm Dribbler — a loss breaks the streak
         showToast(label + ' stopped — ' + (target.name || 'defender') + ' decides what happens to the ball…', 'error');
@@ -8853,10 +8935,7 @@
     pin.talent2 = ch.talent2;
     pin.talentActive = false; pin.talentUsesLeft = 10;
     pin.talent2Active = false; pin.talent2UsesLeft = 10;
-    pin.predatorActive = false; pin.predatorCharges = 4; pin.predatorLocked = false;
-    pin.assassinClearUsed = false;
-    pin.destroyerActive = false; pin.destroyerUsed = false; pin.destroyerTurnsLeft = 0;
-    pin.metaDashCharges = 2; pin.metaDashCooldownChunks = 0;
+    resetSharedTalentState(pin);
     editName.value = pin.name;
     editNumber.value = pin.number;
     refreshCharacterTab(pin);
@@ -8926,34 +9005,31 @@
     `},
     { id: 'talents', title: 'Talents', html: `
       <h3>Talents</h3>
-      <p>Every character can have <strong>up to 2 talents</strong>, set in the Character tab. Each slot activates and drains charges completely independently — having two doesn't mean sharing one pool.</p>
+      <p>Every character can have <strong>up to 2 talents</strong>, set in the Character tab. Each Talented Eye is a playwise trait with its own independent activate/cooldown cycle — no shared pool, no per-match cap.</p>
       <ul>
-        <li><strong>Sniper Eyes</strong> — +10 ACC and +10 MTL while active. 10 uses.</li>
-        <li><strong>Assassin Eyes</strong> — +10 STR while active, plus a one-time "Clear the Ball" that instantly makes the ball loose. 10 uses.</li>
-        <li><strong>Meta-Vision</strong> — +10 AGL/MTL/STR while active. Opponents take -5 STR/AGL against you in a challenge unless they also have Meta-Vision active. Activating also unlocks Meta Dash. 10 uses.</li>
-        <li><strong>Predator Eyes</strong> — +15 ACC while active. Only 4 activations per match, and it <strong>locks forever</strong> the moment you confirm a goal scored with it active.</li>
-        <li><strong>Destroyer Eyes</strong> — +20 ACC/STR/AGL. Doesn't activate on its own — it only turns on through Flow (see next section). Once per match, 6 turns.</li>
+        <li><strong>Sniper Eyes</strong> — Activate, and your next pass is guaranteed un-interceptable. Consumed the moment that pass is made, then a <span class="tutorial-number">3-chunk cooldown</span>.</li>
+        <li><strong>Assassin Eyes</strong> — Click the field to drop a zone (same reach as your Dash) for <span class="tutorial-number">3 chunks</span>, then a <span class="tutorial-number">3-chunk cooldown</span>. Enemies inside take -3 to all stats against you. While you're inside it, Intercept/Block/Tackle/Slide Tackle work within 1.5x a pin's width of the ball carrier instead of each action's normal range.</li>
+        <li><strong>Predator Eyes</strong> — Activate, and your next shot attempt in Zone 2/3 skips the MTL (Shots) roll entirely — straight to ACC (Shot), no debuff risk. Consumed on that shot, then a <span class="tutorial-number">3-chunk cooldown</span>.</li>
+        <li><strong>Meta-Vision</strong> — Active for <span class="tutorial-number">3 chunks</span>, then a <span class="tutorial-number">3-chunk cooldown</span>. While active: an Acceleration (SPD) roll of 11+ gets an extra +0.3x move radius, and your Intercept/Block/Tackle/Slide Tackle range is widened by 0.2x.</li>
+        <li><strong>Destroyer Eyes</strong> — Unlocks the first time you hit any one of: 5 lost defensive challenges, 5 failed dribble-past attempts, 8 SPD rolls of 1-10, or 2 natural 1s on any roll. Once active (<span class="tutorial-number">3 chunks</span>, then a <span class="tutorial-number">5-chunk cooldown</span>): anyone challenging you takes -5 to all stats against you, and anyone who fails to win the ball off you has a 50/50 chance of being charged 2 actions instead of 1.</li>
       </ul>
-      <p><strong>If both talent slots buff the same stat, the bonuses stack</strong> — dual-talent characters genuinely hit harder, not just more often.</p>
     `},
-    { id: 'flow', title: 'Flow & Destroyer Eyes', html: `
-      <h3>Flow & Destroyer Eyes</h3>
+    { id: 'flow', title: 'Flow', html: `
+      <h3>Flow</h3>
       <p>Flow runs in two phases per match:</p>
       <ul>
         <li><strong>Phase 1</strong> — <span class="tutorial-number">6 turns</span> the first time you activate it.</li>
         <li>Then a <span class="tutorial-number">5-chunk cooldown</span>.</li>
         <li><strong>Phase 2</strong> — <span class="tutorial-number">3 more turns</span>, and after that Flow is locked for the rest of the match.</li>
       </ul>
-      <p>While active, Flow wraps the pin in a colored aura (pick the color in the Talent tab) that's visible to everyone.</p>
-      <p><strong>Destroyer Eyes only activates from inside Flow</strong> — it won't turn on from its own talent controls at all. Once Flow is active, a Destroyer Eyes character gets the option to enter Destroyer for <span class="tutorial-number">6 turns</span>, once per match, for +20 ACC/STR/AGL.</p>
+      <p>While active, Flow wraps the pin in a colored aura (pick the color in the Talent tab) that's visible to everyone. Flow is independent of the Talented Eyes — see the Talents section for how each Eye works on its own.</p>
     `},
-    { id: 'dash', title: 'Dash, Super Sprint & Meta Dash', html: `
-      <h3>Dash, Super Sprint & Meta Dash</h3>
-      <p>All three are <strong>free</strong> — they don't cost an action.</p>
+    { id: 'dash', title: 'Dash & Super Sprint', html: `
+      <h3>Dash & Super Sprint</h3>
+      <p>Both are <strong>free</strong> — they don't cost an action.</p>
       <ul>
         <li><strong>Dash</strong> — 2 charges, 2.5x radius. Once both are spent, a 5-chunk cooldown before they refill.</li>
         <li><strong>Super Sprint</strong> (Speedster only) — 1 charge, but also costs a Dash charge alongside it. 3x radius, straight-line only (no diagonal), and a slightly longer cooldown than a normal Dash.</li>
-        <li><strong>Meta Dash</strong> (Meta-Vision only, while active) — 2 charges per match, no cooldown at all — once they're gone, they're gone until End Match. 1.5x radius, weaker than Dash but doesn't touch your normal Dash charges.</li>
       </ul>
     `},
     { id: 'fouls', title: 'Fouls, Cards & Penalties', html: `
@@ -9956,6 +10032,48 @@
       }
       if (p.flowCooldownChunks > 0) {
         p.flowCooldownChunks -= 1;
+      }
+
+      // ---- Reworked Talented Eyes — active-duration/cooldown ticks ----
+      if (p.assassinZone) {
+        p.assassinActiveChunksLeft -= 1;
+        if (p.assassinActiveChunksLeft <= 0) {
+          p.assassinZone = null;
+          p.assassinCooldownChunks = 3;
+        }
+      } else if (p.assassinCooldownChunks > 0) {
+        p.assassinCooldownChunks -= 1;
+      }
+
+      if (p.sniperCooldownChunks > 0) {
+        p.sniperCooldownChunks -= 1;
+      }
+      // A protected pass shields exactly one interception attempt — if the
+      // chunk turns over before anyone tries one, the window just closes.
+      p.sniperProtectedPassActive = false;
+
+      if (p.predatorCooldownChunks > 0) {
+        p.predatorCooldownChunks -= 1;
+      }
+
+      if (p.metaVisionActive) {
+        p.metaVisionActiveChunksLeft -= 1;
+        if (p.metaVisionActiveChunksLeft <= 0) {
+          p.metaVisionActive = false;
+          p.metaVisionCooldownChunks = 3;
+        }
+      } else if (p.metaVisionCooldownChunks > 0) {
+        p.metaVisionCooldownChunks -= 1;
+      }
+
+      if (p.destroyerActive) {
+        p.destroyerActiveChunksLeft -= 1;
+        if (p.destroyerActiveChunksLeft <= 0) {
+          p.destroyerActive = false;
+          p.destroyerCooldownChunks = 5;
+        }
+      } else if (p.destroyerCooldownChunks > 0) {
+        p.destroyerCooldownChunks -= 1;
       }
     });
   }
