@@ -7902,7 +7902,17 @@
         renderPins();
         return;
       }
-      showToast(label + ' failed — ' + (target.name || 'target') + '’s ' + targetStatKey + ' response wins (' + cTotal + ' vs ' + tTotal + ')', 'error');
+      // Evading a Tackle or Slide Tackle with an AGL response is the same
+      // "burst past them" moment a won dribble is — give the target the
+      // same movement boost a successful "Dribble Past a Defender" grants.
+      // Block/Intercept are untouched (per design, they're about rebounding
+      // or trapping, not beating a defender in open space).
+      if ((defenseType === 'tackle' || defenseType === 'slide') && targetStatKey === 'AGL') {
+        target.radiusMult = 2;
+        showToast(label + ' failed — ' + (target.name || 'target') + '’s AGL response wins, movement boosted for the next move (' + cTotal + ' vs ' + tTotal + ')', 'win');
+      } else {
+        showToast(label + ' failed — ' + (target.name || 'target') + '’s ' + targetStatKey + ' response wins (' + cTotal + ' vs ' + tTotal + ')', 'error');
+      }
       // Emergency Stopper — offer the challenger a once-per-match respin of this exact roll-off
       if (pinHasSpecialty(challenger, 'emergency-stopper') && !challenger.emergencyStopperUsed) {
         challenger.pendingEmergencyStopperOffer = { targetId: target.id, defenseType, targetTotal: tTotal, cBuff };
