@@ -348,7 +348,7 @@
     border-radius:50%;
     display:flex; align-items:center; justify-content:center;
     font-weight:800;
-    font-size:clamp(8px, 1.5cqw, 13px);
+    font-size:clamp(9px, 1.7cqw, 15px);
     color:#fff;
     border:2px solid rgba(255,255,255,.85);
     box-shadow: 0 2px 6px rgba(0,0,0,.45);
@@ -689,7 +689,7 @@
     border-radius:50%;
     display:flex; align-items:center; justify-content:center;
     font-weight:800;
-    font-size:12px;
+    font-size:13px;
     color:#fff;
     cursor:pointer;
     border:2px solid rgba(255,255,255,.5);
@@ -1650,6 +1650,11 @@
     border:2px solid transparent;
   }
   .swatch.active{ border-color:var(--blue); }
+  .swatch-auto{
+    display:flex; align-items:center; justify-content:center;
+    background:repeating-conic-gradient(#888 0% 25%, #bbb 0% 50%) 0 0/11px 11px;
+    color:#fff; font-size:8px; font-weight:800; text-shadow:0 1px 1px rgba(0,0,0,.6);
+  }
   .style-grid{
     display:flex; flex-wrap:wrap; gap:4px;
     margin-top:2px;
@@ -2941,6 +2946,11 @@
     <div class="swatches" id="editSwatches2"></div>
     <label>Kit Style</label>
     <div class="style-grid" id="editStyles"></div>
+    <label>Number Color</label>
+    <div class="swatches" id="editSwatchesNumber"></div>
+    <p class="stat-hint">Auto picks black or white for contrast against the Primary Color. Pick a preset to pin it instead.</p>
+    <label>Number Font</label>
+    <div class="style-grid" id="editFonts"></div>
   </div>
 
   <div class="tab-pane" data-pane="character" style="display:none;">
@@ -3083,6 +3093,9 @@
     <div class="pane-divider"></div>
     <button class="btn dash-use-btn" id="dribblePastBtn" type="button">Dribble Past a Defender</button>
     <p class="stat-hint" id="dribblePastNote">Costs 1 action. Uses your AGL vs their chosen stat &mdash; win and your next move gets a boost.</p>
+
+    <button class="btn dash-use-btn" id="oneTwoBtn" type="button">The One-Two</button>
+    <p class="stat-hint" id="oneTwoNote">Costs 1 action. Pick a nearby teammate to bounce it off &mdash; the closest marker picks who to challenge. Win and you get the ball back with a big movement boost.</p>
 
     <div class="pane-divider"></div>
     <div class="dash-status" id="dashStatus" title="Free — doesn't cost a turn. Boosts your move radius to 2.5 pins for your next move.">
@@ -3461,6 +3474,28 @@
     return luminance > 0.42 ? '#111111' : '#ffffff';
   }
 
+  // A pin's number color is auto-computed for contrast by default, but can be
+  // pinned to an explicit preset (set from the Kit tab) that overrides that.
+  function pinNumberColor(pin){
+    return pin.numberColor || reactiveTextColor(pin.color);
+  }
+
+  // Number Font presets — kept to safe system font stacks (no external font
+  // loading) so this still renders correctly offline / from a bare file://.
+  const NUMBER_FONT_PRESETS = [
+    { id: 'default',   label: 'Default',   css: '' },
+    { id: 'impact',     label: 'Impact',    css: "Impact, 'Arial Narrow', Haettenschweiler, sans-serif" },
+    { id: 'mono',       label: 'Mono',      css: "'Courier New', Courier, monospace" },
+    { id: 'slab',       label: 'Slab',      css: "Georgia, 'Times New Roman', serif" },
+    { id: 'rounded',    label: 'Rounded',   css: "Verdana, 'Trebuchet MS', sans-serif" }
+  ];
+  const NUMBER_FONT_BY_ID = {};
+  NUMBER_FONT_PRESETS.forEach(f => { NUMBER_FONT_BY_ID[f.id] = f.css; });
+
+  function pinNumberFont(pin){
+    return (pin.numberFont && NUMBER_FONT_BY_ID[pin.numberFont]) || '';
+  }
+
   function kitBackground(color, color2, style){
     const c1 = color || '#2B6CD4';
     const c2 = color2 || '#FFFFFF';
@@ -3544,6 +3579,8 @@
   const editNumber = document.getElementById('editNumber');
   const editSwatches = document.getElementById('editSwatches');
   const editSwatches2 = document.getElementById('editSwatches2');
+  const editSwatchesNumber = document.getElementById('editSwatchesNumber');
+  const editFonts = document.getElementById('editFonts');
   const editStyles = document.getElementById('editStyles');
 
   let pins = [];
@@ -3938,6 +3975,7 @@
       p.lockdownTargetId = null; // Lockdown Marker — marks don't carry between matches
       p.emergencyStopperUsed = false; // Emergency Stopper — refills for the new match
       p.pendingEmergencyStopperOffer = null;
+      p.pendingOneTwoOffer = null;
     });
     maxChunkReached = Number(chunkValue.value) || 1; // otherwise a fresh match starting back at a low chunk would never trigger a refill until it climbed past whatever chunk the PREVIOUS match reached
     maxChunkResetAt = Date.now();
@@ -4002,6 +4040,73 @@
     });
     editSwatches2.appendChild(s);
   });
+
+  // ---- Number Color presets — "Auto" (null) restores the automatic black/white
+  // contrast pick against the pin's Primary Color; any preset pins it instead.
+  (function(){
+    const autoSwatch = document.createElement('div');
+    autoSwatch.className = 'swatch swatch-auto';
+    autoSwatch.dataset.color = '';
+    autoSwatch.title = 'Auto (contrast against Primary Color)';
+    autoSwatch.textContent = 'A';
+    autoSwatch.addEventListener('click', () => {
+      const pin = pins.find(p => p.id === activePinId);
+      if (!pin) return;
+      pin.numberColor = null;
+      markDirty();
+      renderPins();
+      highlightSwatch(editSwatchesNumber, '');
+    });
+    editSwatchesNumber.appendChild(autoSwatch);
+  })();
+  COLORS.forEach(color => {
+    const s = document.createElement('div');
+    s.className = 'swatch';
+    s.style.background = color;
+    s.dataset.color = color;
+    s.addEventListener('click', () => {
+      const pin = pins.find(p => p.id === activePinId);
+      if (!pin) return;
+      pin.numberColor = color;
+      markDirty();
+      renderPins();
+      highlightSwatch(editSwatchesNumber, color);
+    });
+    editSwatchesNumber.appendChild(s);
+  });
+
+  // ---- Number Font presets ----
+  NUMBER_FONT_PRESETS.forEach(font => {
+    const b = document.createElement('button');
+    b.className = 'style-btn';
+    b.dataset.font = font.id;
+    const sw = document.createElement('div');
+    sw.className = 'style-swatch';
+    sw.style.background = 'var(--panel-2)';
+    sw.style.color = 'var(--text)';
+    sw.style.fontFamily = font.css;
+    sw.style.fontWeight = '800';
+    sw.textContent = '9';
+    const label = document.createElement('span');
+    label.textContent = font.label;
+    b.appendChild(sw);
+    b.appendChild(label);
+    b.addEventListener('click', () => {
+      const pin = pins.find(p => p.id === activePinId);
+      if (!pin) return;
+      pin.numberFont = font.id === 'default' ? null : font.id;
+      markDirty();
+      renderPins();
+      refreshFontPreviews(pin);
+    });
+    editFonts.appendChild(b);
+  });
+
+  function refreshFontPreviews(pin){
+    [...editFonts.children].forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.font === (pin.numberFont || 'default'));
+    });
+  }
 
   STYLES.forEach(style => {
     const b = document.createElement('button');
@@ -4388,6 +4493,9 @@
     lockdownTargetId: null, // Lockdown Marker
     emergencyStopperUsed: false, // Emergency Stopper — once per match, reset by End Match
     pendingEmergencyStopperOffer: null, // Emergency Stopper — { targetId, defenseType, targetTotal, cBuff } while the respin offer is live
+    pendingOneTwoOffer: null, // The One-Two — { carrierId, partnerId } while this pin (the nearest marker) decides who to challenge
+    numberColor: null, // explicit kit-number color override from the Kit tab; null = auto-contrast against pin.color
+    numberFont: null, // explicit kit-number font-family preset from the Kit tab; null = default app font
     mtlAttackNat1Penalty: false, // a natural 1 on MTL (Attack) halves this pin's movement until the chunk ends
     onBench: false, benchSlot: null,
     yellowCards: 0, redCarded: false, banned: false,
@@ -4482,7 +4590,8 @@
 
     seat.className = 'bench-seat';
     seat.style.background = kitBackground(pin.color, pin.color2, pin.style);
-    seat.style.color = reactiveTextColor(pin.color);
+    seat.style.color = pinNumberColor(pin);
+    seat.style.fontFamily = pinNumberFont(pin);
     seat.textContent = pin.number || '';
     seat.title = pin.name || ('Sub #' + (pin.number || slot + 1));
     seat.dataset.id = pin.id;
@@ -4524,7 +4633,8 @@
       const seat = document.createElement('div');
       seat.className = 'bench-seat';
       seat.style.background = kitBackground(pin.color, pin.color2, pin.style);
-      seat.style.color = reactiveTextColor(pin.color);
+      seat.style.color = pinNumberColor(pin);
+    seat.style.fontFamily = pinNumberFont(pin);
       seat.textContent = pin.number || '';
       seat.title = (pin.name || 'Pin ' + pin.id) + ' \u2014 click to restore to the field';
       seat.style.cursor = 'pointer';
@@ -4602,7 +4712,8 @@
       el.style.left = (useLive ? live.x : (pendingMove ? pendingMove.x : pin.x)) + '%';
       el.style.top = (useLive ? live.y : (pendingMove ? pendingMove.y : pin.y)) + '%';
       el.style.background = kitBackground(pin.color, pin.color2, pin.style);
-      el.style.color = reactiveTextColor(pin.color);
+      el.style.color = pinNumberColor(pin);
+      el.style.fontFamily = pinNumberFont(pin);
       el.dataset.id = pin.id;
       el.textContent = pin.number || '';
       if (pendingMove) el.classList.add('pin-elevated'); // so its confirm buttons paint above neighboring pins/ball
@@ -4675,6 +4786,32 @@
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
             resolveChallengeWithStat(key);
+          });
+          row.appendChild(btn);
+        });
+        picker.appendChild(row);
+        el.appendChild(picker);
+      }
+
+      if (pin.pendingOneTwoOffer) {
+        el.classList.add('locked-responding');
+        const picker = document.createElement('div');
+        picker.className = 'response-picker';
+        const promptLabel = document.createElement('div');
+        promptLabel.className = 'response-picker-label';
+        promptLabel.textContent = 'The One-Two — who do you attack?';
+        picker.appendChild(promptLabel);
+        const row = document.createElement('div');
+        row.className = 'response-picker-row';
+        [['runner', 'Runner (Steal)'], ['speedster', 'Speedster (Block)']].forEach(([choice, label]) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'response-stat-btn';
+          btn.textContent = label;
+          btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            resolveOneTwoChoice(pin.id, choice);
           });
           row.appendChild(btn);
         });
@@ -4757,6 +4894,7 @@
         if (pendingMoves[pin.id]) return; // must confirm/cancel the move first
         if (pendingChallengeResponse && pendingChallengeResponse.targetId === pin.id) return; // must respond first
         if (pendingDribbleOutcome && pendingDribbleOutcome.defenderId === pin.id) return; // must choose first
+        if (pin.pendingOneTwoOffer) return; // must choose who to attack first
         if (mode === 'play') {
           openRadialMenu(pin.id, e.clientX, e.clientY);
         } else {
@@ -4768,6 +4906,7 @@
         if (pendingMoves[pin.id]) return;
         if (pendingChallengeResponse && pendingChallengeResponse.targetId === pin.id) return;
         if (pendingDribbleOutcome && pendingDribbleOutcome.defenderId === pin.id) return;
+        if (pin.pendingOneTwoOffer) return;
         if (mode === 'play') {
           openRadialMenu(pin.id, e.clientX, e.clientY);
         } else {
@@ -5187,6 +5326,7 @@
     cancelChallenge();
     cancelSub();
     cancelAssassinPlacing();
+    cancelOneTwoPicking();
   }
 
   document.getElementById('aimCancelBtn').addEventListener('click', () => {
@@ -5194,6 +5334,7 @@
     cancelChallenge();
     cancelSub();
     cancelAssassinPlacing();
+    cancelOneTwoPicking();
   });
 
   function onFieldAimCapture(e){
@@ -5237,6 +5378,30 @@
       markDirty();
       cancelAiming();
       renderPins();
+      return;
+    }
+
+    if (oneTwoPickingCarrierId !== null) {
+      if (e.button !== 0) return;
+      const pinEl = e.target.closest && e.target.closest('.pin');
+      if (!pinEl) return; // only a pin click picks a One-Two partner; ignore everything else
+      e.preventDefault();
+      e.stopPropagation();
+      const partnerId = Number(pinEl.dataset.id);
+      const carrierId = oneTwoPickingCarrierId;
+      cancelOneTwoPicking();
+      if (partnerId === carrierId) return; // can't pass to yourself
+      const carrier = pins.find(p => p.id === carrierId);
+      const partner = pins.find(p => p.id === partnerId);
+      if (!carrier || !partner) return;
+      if (partner.color !== carrier.color) { showToast('Pick a teammate to pass to.', 'error'); return; }
+      if (partner.banned || partner.onBench) { showToast('That player isn’t on the field.', 'error'); return; }
+      const pinPx = getPinDiameterPx();
+      if (fieldDistancePx(carrier.x, carrier.y, partner.x, partner.y) > pinPx * 4) {
+        showToast('Too far — need a teammate closer by for a One-Two.', 'error');
+        return;
+      }
+      startOneTwo(carrierId, partnerId);
       return;
     }
 
@@ -5331,6 +5496,7 @@
     if (pendingMoves[id]) return; // pending confirmation, ignore
     if (pendingChallengeResponse && pendingChallengeResponse.targetId === id) return; // must respond first
     if (pendingDribbleOutcome && pendingDribbleOutcome.defenderId === id) return; // must choose first
+    if (pin.pendingOneTwoOffer) return; // must choose who to attack first
     if (mode === 'play' && pin.actions <= 0) return; // no actions left, locked
 
     el.setPointerCapture(e.pointerId);
@@ -5537,6 +5703,7 @@
       ball.x = Math.max(1, Math.min(99, pin.x + ball.offsetX));
       ball.y = Math.max(1, Math.min(99, pin.y + ball.offsetY));
     }
+    markDirty(); // a plain Edit-mode drag is a real change too — without this it never gets picked up by syncTick, so it's never saved/broadcast, and looks like it "reverts" the moment anyone else's change syncs in
     dragState = null;
     renderPins();
   }
@@ -5550,6 +5717,7 @@
     ballToggleBtn.classList.toggle('active', pin.ballCarrier);
     refreshD20Locks(pin);
     refreshDribblePast(pin);
+    refreshOneTwo(pin);
     cancelFreeMoveBtn.style.display = pin.freeMoveUnlocked ? 'block' : 'none';
     emergencyStopperBtn.style.display = pin.pendingEmergencyStopperOffer ? 'block' : 'none';
     refreshDashDisplay(pin);
@@ -5629,6 +5797,7 @@
       ball.x = Math.max(1, Math.min(99, pin.x + ball.offsetX));
       ball.y = Math.max(1, Math.min(99, pin.y + ball.offsetY));
     }
+    markDirty(); // confirming a Play-mode move is a real change — without this it never gets picked up by syncTick, so it's never saved/broadcast, and looks like it "reverts" the moment anyone else's change syncs in
     refreshPlayMenuIfOpen(pin);
     renderPins();
   }
@@ -5651,6 +5820,8 @@
     document.getElementById('pinTeamB').checked = pin.team === 'B';
     highlightSwatch(editSwatches, pin.color);
     highlightSwatch(editSwatches2, pin.color2 || '#FFFFFF');
+    highlightSwatch(editSwatchesNumber, pin.numberColor || '');
+    refreshFontPreviews(pin);
     refreshStylePreviews(pin);
     refreshCharacterTab(pin);
     refreshNpcTab(pin);
@@ -6831,6 +7002,7 @@
     closeAllD20Categories();
     refreshD20Locks(pin);
     refreshDribblePast(pin);
+    refreshOneTwo(pin);
     cancelFreeMoveBtn.style.display = pin.freeMoveUnlocked ? 'block' : 'none';
     emergencyStopperBtn.style.display = pin.pendingEmergencyStopperOffer ? 'block' : 'none';
     refreshDashDisplay(pin);
@@ -6874,7 +7046,9 @@
     tackle: 'Tackle',
     slide: 'Slide Tackle',
     intercept: 'Interception',
-    dribble: 'Dribble Past'
+    dribble: 'Dribble Past',
+    oneTwoSteal: 'One-Two (Loose Ball)',
+    oneTwoBlock: 'One-Two (Block/Intercept)'
   };
   const CHALLENGE_DEFS = [
     { id: 'block',     label: 'Block',         note: 'STR \u2014 within 1 pin of target or the ball' },
@@ -6921,6 +7095,155 @@
       dribblePastBtn.disabled = false;
       dribblePastNote.textContent = 'Costs 1 action. Uses your AGL vs their chosen stat \u2014 win and your next move gets a boost.';
     }
+  }
+
+  // ---- The One-Two: a quick give-and-go mini-move ----
+  // Carrier (A) picks a nearby teammate (B) to bounce the ball off. B gets an
+  // immediate, small, automatic forward boost (the "run"), and the single
+  // closest opposing marker to A is instantly handed a choice, not a 5-stat
+  // picker: attack B (Loose Ball/Steal) or attack A (Intercept/Block). The
+  // defender only has to win ONE of those two rolls, but picking the wrong
+  // player means the One-Two goes through clean. If no defender is close
+  // enough to even offer that choice, the One-Two just succeeds untouched.
+  const oneTwoBtn = document.getElementById('oneTwoBtn');
+  const oneTwoNote = document.getElementById('oneTwoNote');
+  oneTwoBtn.addEventListener('click', () => {
+    if (!activePinId) return;
+    startOneTwoPicking(activePinId);
+  });
+
+  function refreshOneTwo(pin){
+    if (!pin.ballCarrier) {
+      oneTwoBtn.disabled = true;
+      oneTwoNote.textContent = 'Need the ball to start a One-Two.';
+    } else if (pin.actions <= 0) {
+      oneTwoBtn.disabled = true;
+      oneTwoNote.textContent = 'No actions left this round.';
+    } else {
+      oneTwoBtn.disabled = false;
+      oneTwoNote.textContent = 'Costs 1 action. Pick a nearby teammate to bounce it off \u2014 the closest marker picks who to challenge. Win and you get the ball back with a big movement boost.';
+    }
+  }
+
+  let oneTwoPickingCarrierId = null; // set while waiting for a click on the teammate to pass to
+
+  function startOneTwoPicking(carrierId){
+    oneTwoPickingCarrierId = carrierId;
+    closePlayMenu();
+    field.classList.add('aiming');
+    aimHintText.textContent = 'The One-Two \u2014 click a nearby teammate to pass to \u2014 Esc to cancel';
+    aimHint.classList.remove('hidden');
+    document.addEventListener('keydown', onAimKeydown);
+  }
+
+  function cancelOneTwoPicking(){
+    oneTwoPickingCarrierId = null;
+    field.classList.remove('aiming');
+    if (!aimingType && !challengeState && !subState) aimHint.classList.add('hidden');
+    if (!aimingType && !challengeState && !subState) document.removeEventListener('keydown', onAimKeydown);
+  }
+
+  function startOneTwo(carrierId, partnerId){
+    const carrier = pins.find(p => p.id === carrierId);
+    const partner = pins.find(p => p.id === partnerId);
+    if (!carrier || !partner) return;
+    if (!carrier.ballCarrier) { showToast('Need the ball to start a One-Two.', 'error'); return; }
+    if (carrier.actions <= 0) { showToast('No actions left to start a One-Two with.', 'error'); return; }
+
+    carrier.actions -= 1;
+    // B's own boost \u2014 smaller than a won dribble's 2x, but still a real
+    // head start on the return run. Consumed the same way radiusMult always
+    // is: on B's next confirmed move.
+    partner.radiusMult = Math.max(partner.radiusMult || 1, 1.5);
+
+    const pinPx = getPinDiameterPx();
+    const marker = pins
+      .filter(p => p.id !== carrier.id && p.color !== carrier.color && !p.banned && !p.onBench)
+      .map(p => ({ pin: p, dist: fieldDistancePx(carrier.x, carrier.y, p.x, p.y) }))
+      .filter(e => e.dist <= pinPx * 2.5)
+      .sort((a, b) => a.dist - b.dist)[0];
+
+    markDirty();
+
+    if (!marker) {
+      // nobody close enough to even contest it \u2014 the give-and-go goes through clean
+      pins.forEach(p => { p.ballCarrier = false; });
+      carrier.ballCarrier = true;
+      if (ball.active) { ball.x = carrier.x; ball.y = carrier.y; ball.offsetX = 0; ball.offsetY = 0; }
+      carrier.radiusMult = 2;
+      showToast('The One-Two \u2014 no one close enough to stop it, goes through clean!', 'win');
+      refreshPlayMenuIfOpen(carrier);
+      renderPins();
+      return;
+    }
+
+    marker.pin.pendingOneTwoOffer = { carrierId: carrier.id, partnerId: partner.id };
+    showToast('The One-Two \u2014 waiting on ' + (marker.pin.name || 'the defender') + ' to pick who to challenge.', 'win');
+    renderPins();
+  }
+
+  function resolveOneTwoChoice(defenderId, choice){
+    const defender = pins.find(p => p.id === defenderId);
+    if (!defender || !defender.pendingOneTwoOffer) return;
+    const { carrierId, partnerId } = defender.pendingOneTwoOffer;
+    defender.pendingOneTwoOffer = null;
+    markDirty();
+    const carrier = pins.find(p => p.id === carrierId);
+    const partner = pins.find(p => p.id === partnerId);
+    if (!carrier || !partner) { renderPins(); return; }
+
+    // choice === 'runner'    -> attack B, Loose Ball/Steal, STR vs ACC
+    // choice === 'speedster' -> attack A, Intercept/Block,  AGL vs AGL
+    const attacked = choice === 'runner' ? partner : carrier;
+    const dStatKey = choice === 'runner' ? 'STR' : 'AGL';
+    const oStatKey = choice === 'runner' ? 'ACC' : 'AGL';
+    const defenseType = choice === 'runner' ? 'oneTwoSteal' : 'oneTwoBlock';
+    const label = CHALLENGE_LABELS[defenseType];
+
+    const dRoll = Math.floor(Math.random() * 20) + 1;
+    trackDestroyerNat1(defender, dRoll);
+
+    // Natural 1 on the defender's roll = mistimed foul, same as any other physical challenge.
+    if (dRoll === 1) {
+      handleFoul(defender, attacked, defenseType);
+      return;
+    }
+
+    const oRoll = Math.floor(Math.random() * 20) + 1;
+    trackDestroyerNat1(attacked, oRoll);
+    const dOpponentDebuff = getOpponentTalentDebuff(defender, attacked);
+    const oOpponentDebuff = getOpponentTalentDebuff(attacked, defender);
+    const dBuff = getPinStat(defender, dStatKey) + applyTalentBuff(defender, dStatKey) + dOpponentDebuff;
+    const oBuff = getPinStat(attacked, oStatKey) + applyTalentBuff(attacked, oStatKey) + oOpponentDebuff;
+    const dTotal = dRoll + dBuff;
+    const oTotal = oRoll + oBuff;
+    // Ties favor the attack, same spirit as the rest of the One-Two being
+    // slightly offense-leaning \u2014 the defender has to clearly win, not just match.
+    const defenderWins = dTotal > oTotal;
+
+    defender.diceResult = { label: label + ' (You) ' + dStatKey, roll: dRoll, buff: dBuff, total: dTotal, boosted: defenderWins };
+    attacked.diceResult = { label: label + ' (Resp) ' + oStatKey, roll: oRoll, buff: oBuff, total: oTotal, boosted: !defenderWins };
+    logDiceRoll(defender, dRoll, dBuff);
+    logDiceRoll(attacked, oRoll, oBuff);
+
+    if (defenderWins) {
+      if (choice === 'runner') {
+        applyChallengeWinOutcome(defender, partner, 'tackle', dTotal, oTotal, label);
+      } else {
+        applyChallengeWinOutcome(defender, carrier, 'block', dTotal, oTotal, label);
+      }
+    } else {
+      pins.forEach(p => { p.ballCarrier = false; });
+      carrier.ballCarrier = true;
+      if (ball.active) { ball.x = carrier.x; ball.y = carrier.y; ball.offsetX = 0; ball.offsetY = 0; }
+      carrier.radiusMult = 2;
+      showToast(label + ' failed \u2014 the One-Two connects, ' + (carrier.name || 'the carrier') + ' is back in and boosted (' + dTotal + ' vs ' + oTotal + ')', 'win');
+    }
+
+    if (activePinId === defender.id) refreshPlayMenuIfOpen(defender);
+    if (activePinId === carrier.id) refreshPlayMenuIfOpen(carrier);
+    if (activePinId === partner.id) refreshPlayMenuIfOpen(partner);
+    renderPins();
   }
 
   // Real pixel-space distance between two field points (percentage coords), using
@@ -11139,7 +11462,7 @@
       else if (tickCount % 5 === 2) fetchPresence();
     }
 
-    if (dragState || ballDragState || aimingType || challengeState || subState) return;
+    if (dragState || ballDragState || aimingType || challengeState || subState || oneTwoPickingCarrierId !== null) return;
     if (anyPanelOpen()) return;
 
     // Skip this poll if we just saved — the save's own merge step already
