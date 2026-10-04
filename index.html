@@ -5486,6 +5486,34 @@
   });
 
   // ---- drag ----
+  // Pinch-zoom coordinate fix (bug report: "1 pin of extra movement" for
+  // moves/acceleration/dashes on a zoomed-in mobile HUD). Every bit of drag
+  // and move-radius math below compares a PointerEvent's clientX/clientY
+  // against rectangles from getBoundingClientRect() (pin size, field size,
+  // the anchor point). getBoundingClientRect() always reports positions in
+  // the unscaled LAYOUT viewport. On some mobile browsers (notably iOS
+  // Safari), once the user pinch-zooms in, PointerEvent clientX/clientY
+  // instead follow the zoomed-in VISUAL viewport — a different coordinate
+  // space, panned and scaled relative to the layout one. Mixing the two
+  // without correction makes a given on-screen finger-drag distance
+  // translate into a larger (or smaller) real move than the same drag would
+  // produce unzoomed, which is exactly the "extra movement" symptom — it
+  // scales with how zoomed in the page is, and applies identically to a
+  // plain move, an Acceleration-boosted move, and a Dash, because they all
+  // share this same drag path and only differ in their radiusMult.
+  // This converts an event's clientX/clientY into that same layout-viewport
+  // space before any math uses it, so the two stay consistent at any zoom
+  // level. When visualViewport isn't available, or the page isn't zoomed
+  // (scale === 1), this is a no-op passthrough.
+  function layoutPointFromEvent(e){
+    const vv = window.visualViewport;
+    if (!vv || vv.scale === 1) return { x: e.clientX, y: e.clientY };
+    return {
+      x: vv.offsetLeft + e.clientX / vv.scale,
+      y: vv.offsetTop + e.clientY / vv.scale
+    };
+  }
+
   function onPinPointerDown(e){
     if (e.button === 2) return;
     const el = e.currentTarget;
@@ -5541,6 +5569,7 @@
   function onPinPointerMoveCore(e){
     if (!dragState || e.pointerId !== dragState.pointerId) return;
     const rect = field.getBoundingClientRect();
+    const pt = layoutPointFromEvent(e); // normalized into the same coordinate space as getBoundingClientRect() — see comment above layoutPointFromEvent
 
     if (mode === 'play') {
       const pin = pins.find(p => p.id === dragState.id);
@@ -5548,8 +5577,8 @@
 
       if (pin.freeMoveUnlocked) {
         // MTL (Attack) 19+: free move anywhere on the pin's own half of the field
-        let x = ((e.clientX - rect.left) / rect.width) * 100;
-        let y = ((e.clientY - rect.top) / rect.height) * 100;
+        let x = ((pt.x - rect.left) / rect.width) * 100;
+        let y = ((pt.y - rect.top) / rect.height) * 100;
         if (pin.anchorX < 50) x = Math.max(1, Math.min(49.5, x));
         else x = Math.max(50.5, Math.min(99, x));
         y = Math.max(1, Math.min(99, y));
@@ -5562,8 +5591,8 @@
 
       const anchorPxX = rect.left + (pin.anchorX / 100) * rect.width;
       const anchorPxY = rect.top + (pin.anchorY / 100) * rect.height;
-      let dx = e.clientX - anchorPxX;
-      let dy = e.clientY - anchorPxY;
+      let dx = pt.x - anchorPxX;
+      let dy = pt.y - anchorPxY;
       if (pin.forwardOnlyMove) {
         // Super Sprint: straight line only — lock to whichever axis has the bigger pull
         if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
@@ -5587,8 +5616,8 @@
       return;
     }
 
-    let x = ((e.clientX - rect.left) / rect.width) * 100;
-    let y = ((e.clientY - rect.top) / rect.height) * 100;
+    let x = ((pt.x - rect.left) / rect.width) * 100;
+    let y = ((pt.y - rect.top) / rect.height) * 100;
     x = Math.max(1, Math.min(99, x));
     y = Math.max(1, Math.min(99, y));
     dragState.el.style.left = x + '%';
@@ -10412,6 +10441,15 @@
   }
 
   let lastKnownChunkValue = Number(chunkValue.value) || 1; // tracks whichever chunk we were just on, so we always know what to snapshot when leaving it
+  // Logical-clock stamp for the chunk counter itself — without this, saveState()
+  // had no way to tell "my own chunkValue is newer than what's in storage" from
+  // "my chunkValue is stale, I just haven't pulled the latest yet", so a save
+  // triggered by ANY local action (even just switching Edit<->Play) could blindly
+  // push a stale chunk number back out and clobber someone else's more recent
+  // advance — which is what made the chunk counter randomly drop a step and
+  // made dash cooldowns stall at "0 chunks, nothing happens", especially for a
+  // higher-latency player whose local copy lags behind more often.
+  let chunkValueUpdatedAt = 0;
 
   function handleChunkChange(newValue){
     const oldValue = lastKnownChunkValue;
@@ -10419,6 +10457,7 @@
     if (hasStartedPlay) snapshotCurrentChunk(oldValue); // preserve exactly how we're leaving this chunk
 
     chunkValue.value = newValue;
+    chunkValueUpdatedAt = nextTimestamp();
     syncMiniHud();
 
     // only a genuinely new high-water-mark chunk grants fresh moves;
@@ -11141,6 +11180,7 @@
         }
         noteObservedTimestamp(remoteState.pendingChallengeResponseUpdatedAt);
         noteObservedTimestamp(remoteState.pendingDribbleOutcomeUpdatedAt);
+        noteObservedTimestamp(remoteState.chunkValueUpdatedAt);
       }
       stampChangedPins(); // fresh timestamp on anything that actually changed locally
       stampBallIfChanged();
@@ -11167,6 +11207,17 @@
           pendingDribbleOutcomeUpdatedAt = remoteState.pendingDribbleOutcomeUpdatedAt;
         }
         mergeMaxChunk(remoteState.maxChunkReached, remoteState.maxChunkResetAt);
+        // The chunk counter itself needs the same "only take it if it's actually
+        // newer" treatment — without this, OUR OWN possibly-stale chunkValue
+        // (whatever's sitting in the input locally, if we haven't pulled the
+        // latest yet) would get pushed out unconditionally below and silently
+        // overwrite someone else's more recent chunk advance.
+        if ((remoteState.chunkValueUpdatedAt || 0) > chunkValueUpdatedAt) {
+          chunkValue.value = remoteState.chunkValue;
+          chunkValueUpdatedAt = remoteState.chunkValueUpdatedAt;
+          lastKnownChunkValue = Number(remoteState.chunkValue) || lastKnownChunkValue;
+          syncMiniHud();
+        }
       }
 
       const version = nextTimestamp(); // also logical-clock-based, so "is there a newer save" comparisons aren't thrown off by clock drift either
@@ -11180,7 +11231,7 @@
         ball, shots, shotIdSeq, deletedShotIds,
         hasStartedPlay, maxChunkReached, maxChunkResetAt, stadiumLook,
         chunkSnapshots,
-        chunkValue: chunkValue.value,
+        chunkValue: chunkValue.value, chunkValueUpdatedAt,
         scoreA: scoreA.value, scoreB: scoreB.value,
         teamAName: teamAName.value, teamBName: teamBName.value,
         greyZoneColor: document.getElementById('greyZoneColor').value,
@@ -11357,6 +11408,11 @@
       // no-op, and stay stuck that way on every click after. Keeping this
       // in lockstep with every remote-driven change closes that gap.
       lastKnownChunkValue = Number(state.chunkValue) || lastKnownChunkValue;
+      // Keep our own merge-comparison clock in lockstep too — otherwise the
+      // next local save (even one unrelated to the chunk counter, like just
+      // switching Edit<->Play) would compare against a stale chunkValueUpdatedAt
+      // and could still clobber this value right back out again.
+      if (state.chunkValueUpdatedAt) chunkValueUpdatedAt = Math.max(chunkValueUpdatedAt, state.chunkValueUpdatedAt);
     }
     if (state.scoreA !== undefined) scoreA.value = state.scoreA;
     if (state.scoreB !== undefined) scoreB.value = state.scoreB;
