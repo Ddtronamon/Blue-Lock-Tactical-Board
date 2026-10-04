@@ -3686,6 +3686,36 @@
     return anyPin ? anyPin.getBoundingClientRect().width : 30;
   }
 
+  // Movement-radius unit, field-based instead of pin-based. The .pin CSS rule
+  // sizes a pin at 4.3cqw of the field's own width (container-type: inline-size
+  // on .field) — but clamps that to a 16-28px floor/ceiling for legibility. The
+  // move/dash/acceleration radius used to be computed directly from the pin's
+  // ACTUAL rendered (and therefore sometimes-clamped) width. That ties how far
+  // a pin can move to how big it happens to be drawn, which drifts away from a
+  // fixed fraction of the field the moment either edge of that clamp kicks in
+  // (small field = pin floored at 16px while the field keeps shrinking = pin
+  // is relatively bigger = more effective move range; big/zoomed field = pin
+  // ceilinged at 28px while the field keeps growing = relatively smaller pin
+  // = less effective move range). Movement should spawn right on the pin but
+  // scale with the FIELD, not with whatever size the pin itself got clamped
+  // to — so this recomputes a fixed-percent-of-field-width size directly from
+  // the field's live rect every time, and every radius calculation below uses
+  // this instead of the pin's own getBoundingClientRect().width.
+  // NOTE on the percent chosen: the pin's raw, unclamped 4.3cqw only actually
+  // renders at any normal desktop/tablet field width (field narrower than
+  // ~651px is needed before 4.3% drops below the old 28px ceiling) — in
+  // practice almost every field was wide enough that the pin sat capped at
+  // that 28px ceiling, so 4.3% is noticeably BIGGER than the move range
+  // everyone was actually used to playing with, not a truer version of it.
+  // 2.75% reproduces that familiar, pre-fix 28px-at-a-normal-field-width feel
+  // while still being a fixed fraction of the field (so it no longer drifts
+  // with zoom/screen size the way the old pin-based math did). Tune this one
+  // number if the move range still feels off in either direction.
+  const PIN_RADIUS_FIELD_PCT = 2.75;
+  function pinRadiusUnitPx(fieldRect){
+    return fieldRect.width * (PIN_RADIUS_FIELD_PCT / 100);
+  }
+
   // ---- Shooting zones (field is 0-1240 wide in viewBox units; pin.x/y are 0-100%) ----
   // Box = penalty area (no MTL(Shots) roll needed). Zone 2 = D10+. Zone 3 = D15+. Beyond = out of range.
   // ============================================================
@@ -3743,11 +3773,9 @@
     if (!ball.active) return false;
     const el = pinLayer.querySelector('[data-id="' + pin.id + '"]');
     if (!el) return false;
-    const pinRect = el.getBoundingClientRect();
     const fieldRect = field.getBoundingClientRect();
     if (!fieldRect.width || !fieldRect.height) return false;
-    const pinDiameterPx = pinRect.width;
-    const maxRadiusPx = pinDiameterPx * getEffectiveRadiusMult(pin);
+    const maxRadiusPx = pinRadiusUnitPx(fieldRect) * getEffectiveRadiusMult(pin);
     const pinPxX = fieldRect.left + (pin.anchorX / 100) * fieldRect.width;
     const pinPxY = fieldRect.top + (pin.anchorY / 100) * fieldRect.height;
     const ballPxX = fieldRect.left + (ball.x / 100) * fieldRect.width;
@@ -4946,8 +4974,13 @@
       const pinId = Number(pinIdStr);
       const pin = pins.find(p => p.id === pinId);
       if (!pin || pin.freeMoveUnlocked) return;
-      const pinEl = pinLayer.querySelector('.pin[data-id="' + pinId + '"]');
-      const d = pinEl ? pinEl.getBoundingClientRect().width : getPinDiameterPx();
+      // Field-based, matching the live drag ring in onPinPointerDown — not the
+      // pin's own (possibly clamped) rendered size. Without this, the ring you
+      // see WHILE dragging (field-based, correct) and the ring shown AFTER you
+      // let go to confirm the move (this one, pin-based) could disagree,
+      // visibly shrinking the ring the instant you release — same underlying
+      // mismatch as the move-radius fix itself, just missed here.
+      const d = pinRadiusUnitPx(field.getBoundingClientRect());
       const ring = document.createElement('div');
       ring.className = 'move-ring' + (pin.actions <= 0 ? ' spent' : '');
       const ringRadiusMult2 = getEffectiveRadiusMult(pin);
@@ -5533,7 +5566,10 @@
       id,
       pointerId: e.pointerId,
       el,
-      pinDiameterPx: el.getBoundingClientRect().width,
+      // Field-based, not pin-based — see pinRadiusUnitPx()'s comment. Keeps the
+      // move/dash/acceleration radius a fixed fraction of the FIELD regardless
+      // of whatever size the pin itself is actually clamped to on screen.
+      radiusUnitPx: pinRadiusUnitPx(field.getBoundingClientRect()),
       ringEl: null,
       blindSpotBoostActive: false
     };
@@ -5551,7 +5587,7 @@
     if (mode === 'play' && !pin.freeMoveUnlocked) {
       const ring = document.createElement('div');
       ring.className = 'move-ring' + (pin.actions <= 0 ? ' spent' : '');
-      const d = dragState.pinDiameterPx;
+      const d = dragState.radiusUnitPx;
       const ringRadiusMult = getEffectiveRadiusMult(pin, dragState.blindSpotBoostActive);
       ring.style.width = (d * 2 * ringRadiusMult) + 'px';
       ring.style.height = (d * 2 * ringRadiusMult) + 'px';
@@ -5598,7 +5634,10 @@
         if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
         else dx = 0;
       }
-      const maxRadiusPx = dragState.pinDiameterPx * getEffectiveRadiusMult(pin, dragState.blindSpotBoostActive);
+      // Recomputed from the field's live rect (not the drag-start snapshot) so the
+      // boundary stays correct even if the field's size changes mid-drag (e.g. a
+      // window resize or a zoom change while the pointer is still down).
+      const maxRadiusPx = pinRadiusUnitPx(rect) * getEffectiveRadiusMult(pin, dragState.blindSpotBoostActive);
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > maxRadiusPx && dist > 0) {
         const scale = maxRadiusPx / dist;
