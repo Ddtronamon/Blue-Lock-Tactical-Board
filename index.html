@@ -333,27 +333,38 @@
 
   /* ---- Pins ---- */
   /* ============================================================
-     LOCKED — pin size, confirmed correct on [this session].
-     4.3cqw / min 16px / max 28px. DO NOT change these values as a
-     side effect of any other edit. If a future task appears to
-     require touching this rule, STOP and ask the user to
-     explicitly confirm before changing anything here.
+     LOCKED — pin size. Changed on the user's explicit request (pins
+     must stay a fixed fraction of the FIELD at every zoom level, so
+     nobody can "touch" pins that aren't touching): now 2.75cqw with
+     NO min/max px clamp. 2.75 matches PIN_RADIUS_FIELD_PCT in the JS
+     — keep the two in sync. DO NOT change these values as a side
+     effect of any other edit. If a future task appears to require
+     touching this rule, STOP and ask the user to explicitly confirm.
      ============================================================ */
   .pin{
     position:absolute;
-    width:4.3cqw; height:4.3cqw;
-    min-width:16px; min-height:16px;
-    max-width:28px; max-height:28px;
+    width:2.75cqw; height:2.75cqw;
     transform:translate(-50%,-50%);
     border-radius:50%;
     display:flex; align-items:center; justify-content:center;
     font-weight:800;
-    font-size:clamp(9px, 1.7cqw, 15px);
+    font-size:1.5cqw;
     color:#fff;
     border:2px solid rgba(255,255,255,.85);
     box-shadow: 0 2px 6px rgba(0,0,0,.45);
     cursor:grab;
     z-index:5;
+  }
+  /* Jersey number wrapper: line-height:1 removes font-specific leading, and
+     text-box-trim (where supported) trims the line box to the digits' cap
+     height so the number is optically centered no matter which number font
+     (Impact/Georgia/Verdana/...) has odd ascent/descent metrics. */
+  .pin-num{
+    display:block;
+    line-height:1;
+    text-align:center;
+    pointer-events:none;
+    text-box:trim-both cap alphabetic;
   }
   .pin.pin-elevated{ z-index:60; }
 
@@ -363,13 +374,13 @@
     top:-1.7em;
     left:50%;
     transform:translateX(-50%);
-    font-size:11px;
+    font-size:max(6px, 1.08cqw); /* field-relative (HUD scales with the field like pins do); 6px floor keeps it legible */
     font-weight:700;
     letter-spacing:.3px;
     color:#fff;
     background:rgba(0,0,0,.55);
-    padding:1px 6px;
-    border-radius:4px;
+    padding:.09em .55em;
+    border-radius:.36em;
     white-space:nowrap;
     pointer-events:none;
   }
@@ -380,14 +391,14 @@
     top:-3.1em;
     left:50%;
     transform:translateX(-50%);
-    font-size:11px;
+    font-size:max(6px, 1.08cqw);
     font-weight:800;
     letter-spacing:.3px;
     color:#1a1408;
     background:#F2C230;
-    border:1.5px solid #7a5a0a;
-    padding:2px 7px;
-    border-radius:10px;
+    border:.14em solid #7a5a0a;
+    padding:.18em .64em;
+    border-radius:.9em;
     white-space:nowrap;
     cursor:pointer;
     box-shadow:0 2px 5px rgba(0,0,0,.5);
@@ -588,24 +599,24 @@
     bottom:-1.3em;
     left:50%;
     transform:translateX(-50%);
-    display:flex; gap:4px;
+    display:flex; gap:.39cqw;
     z-index:6;
     pointer-events:none;
   }
   .pip{
-    width:6px; height:6px;
+    width:.59cqw; height:.59cqw;
     border-radius:50%;
     background:rgba(255,255,255,.2);
   }
   .pip.filled{ background:var(--blue); }
 
   .confirm-btn{
-    width:18px; height:18px;
+    width:1.76cqw; height:1.76cqw;
     border-radius:50%;
     border:none;
     cursor:pointer;
     display:flex; align-items:center; justify-content:center;
-    font-size:11px;
+    font-size:max(6px, 1.08cqw);
     font-weight:800;
     color:#fff;
     box-shadow:0 2px 5px rgba(0,0,0,.5);
@@ -722,9 +733,7 @@
 
   .ball-token{
     position:absolute;
-    width:2.6cqw; height:2.6cqw;
-    min-width:11px; min-height:11px;
-    max-width:18px; max-height:18px;
+    width:1.76cqw; height:1.76cqw; /* field-relative, no px clamp — same idea as .pin */
     transform:translate(-50%,-50%);
     border-radius:50%;
     background-image: var(--ball-svg);
@@ -1751,19 +1760,19 @@
   }
   .pin .ball-badge{
     position:absolute;
-    top:-5px; right:-5px;
-    width:16px; height:16px;
+    top:-.49cqw; right:-.49cqw;
+    width:1.57cqw; height:1.57cqw;
     border-radius:50%;
     background:#fff;
     display:flex; align-items:center; justify-content:center;
-    font-size:10px;
+    font-size:max(5px, .98cqw);
     box-shadow:0 1px 4px rgba(0,0,0,.55);
     z-index:7;
   }
   .pin .yellow-card-badge{
     position:absolute;
-    top:-4px; left:-4px;
-    width:9px; height:12px;
+    top:-.39cqw; left:-.39cqw;
+    width:.88cqw; height:1.18cqw;
     border-radius:2px;
     background:#F2C230;
     border:1px solid rgba(0,0,0,.4);
@@ -3681,9 +3690,14 @@
     logEvent(msg);
   }
 
+  // Field-based, NOT read off a pin element: the pin is now drawn at exactly
+  // PIN_RADIUS_FIELD_PCT of the field width (see the .pin CSS), so contact/
+  // proximity checks (tackle, block, dribble, intercept...) stay a fixed
+  // fraction of the field at every zoom level.
   function getPinDiameterPx(){
-    const anyPin = pinLayer.querySelector('.pin');
-    return anyPin ? anyPin.getBoundingClientRect().width : 30;
+    const field = document.querySelector('.field');
+    const w = field ? field.getBoundingClientRect().width : 0;
+    return w > 0 ? pinRadiusUnitPx({ width: w }) : 30;
   }
 
   // Movement-radius unit, field-based instead of pin-based. The .pin CSS rule
@@ -3717,7 +3731,7 @@
   }
 
   // ---- Shooting zones (field is 0-1240 wide in viewBox units; pin.x/y are 0-100%) ----
-  // Box = penalty area (no MTL(Shots) roll needed). Zone 2 = D10+. Zone 3 = D15+. Beyond = out of range.
+  // Box = penalty area (no MTL(Shots) roll needed). Zone 2 = D10+. Zone 3 = D18+. Beyond = out of range.
   // ============================================================
   // LOCKED — zone boundaries, confirmed correct on [this session].
   // Zone 2 outer edge (279) sits exactly on the D-arc's mathematical
@@ -3738,9 +3752,9 @@
     if (fx >= 995 && inBoxY) return { zone: 'box', side: 'right' };
 
     if (fx <= 279) return { zone: 'zone2', side: 'left', required: 10 };
-    if (fx <= 370) return { zone: 'zone3', side: 'left', required: pinHasSpecialty(pin, 'long-shot-specialist') ? 10 : 15 };
+    if (fx <= 370) return { zone: 'zone3', side: 'left', required: pinHasSpecialty(pin, 'long-shot-specialist') ? 15 : 18 };
     if (fx >= 961) return { zone: 'zone2', side: 'right', required: 10 };
-    if (fx >= 870) return { zone: 'zone3', side: 'right', required: pinHasSpecialty(pin, 'long-shot-specialist') ? 10 : 15 };
+    if (fx >= 870) return { zone: 'zone3', side: 'right', required: pinHasSpecialty(pin, 'long-shot-specialist') ? 15 : 18 };
     return { zone: 'none' };
   }
 
@@ -3751,7 +3765,9 @@
     if (z.zone === 'zone2' || z.zone === 'zone3') {
       // Predator Eyes — skips the MTL (Shots) gate entirely, straight to the
       // shot roll with no debuff risk since that only comes from a failed roll.
-      if (pin.predatorReady) return { available: true, debuff: 0, zone: z.zone };
+      // Zone 2 only — Zone 3's MTL (now 18+) still has to be rolled for real,
+      // even with Predator Eyes active.
+      if (pin.predatorReady && z.zone === 'zone2') return { available: true, debuff: 0, zone: z.zone };
       const r = pin.mtlShotsResult;
       if (r && r.zone === z.zone) {
         const debuff = r.passed ? 0 : (z.zone === 'zone3' ? -10 : -5);
@@ -3803,7 +3819,7 @@
       name: 'Shooting',
       specialties: [
         { id: 'clinical-finisher', name: 'Clinical Finisher', desc: '+3 ACC on any shot taken from inside the box. No cooldown.' },
-        { id: 'long-shot-specialist', name: 'Long Shot Specialist', desc: 'Zone 3\u2019s MTL (Shots) requirement drops from 15+ to 10+ for you.' },
+        { id: 'long-shot-specialist', name: 'Long Shot Specialist', desc: 'Zone 3\u2019s MTL (Shots) requirement drops from 18+ to 15+ for you.' },
         { id: 'volley-expert', name: 'Volley Expert', desc: '+3 ACC on a volley shot (not carrying the ball) taken from the box or Zone 2. 8-chunk cooldown after use.' },
         { id: 'far-corner-specialist', name: 'Far Corner Specialist', desc: '+3 ACC on a shot from Zone 2. 6-chunk cooldown after use.' }
       ]
@@ -4619,8 +4635,13 @@
     seat.className = 'bench-seat';
     seat.style.background = kitBackground(pin.color, pin.color2, pin.style);
     seat.style.color = pinNumberColor(pin);
-    seat.style.fontFamily = pinNumberFont(pin);
-    seat.textContent = pin.number || '';
+    if (pin.number) {
+      const numEl = document.createElement('span');
+      numEl.className = 'pin-num';
+      numEl.style.fontFamily = pinNumberFont(pin); // number font applies to the NUMBER only — names/labels keep the normal font
+      numEl.textContent = pin.number;
+      seat.appendChild(numEl);
+    }
     seat.title = pin.name || ('Sub #' + (pin.number || slot + 1));
     seat.dataset.id = pin.id;
 
@@ -4662,8 +4683,13 @@
       seat.className = 'bench-seat';
       seat.style.background = kitBackground(pin.color, pin.color2, pin.style);
       seat.style.color = pinNumberColor(pin);
-    seat.style.fontFamily = pinNumberFont(pin);
-      seat.textContent = pin.number || '';
+      if (pin.number) {
+        const numEl = document.createElement('span');
+        numEl.className = 'pin-num';
+        numEl.style.fontFamily = pinNumberFont(pin); // number font applies to the NUMBER only — names/labels keep the normal font
+        numEl.textContent = pin.number;
+        seat.appendChild(numEl);
+      }
       seat.title = (pin.name || 'Pin ' + pin.id) + ' \u2014 click to restore to the field';
       seat.style.cursor = 'pointer';
       seat.addEventListener('click', () => {
@@ -4741,9 +4767,14 @@
       el.style.top = (useLive ? live.y : (pendingMove ? pendingMove.y : pin.y)) + '%';
       el.style.background = kitBackground(pin.color, pin.color2, pin.style);
       el.style.color = pinNumberColor(pin);
-      el.style.fontFamily = pinNumberFont(pin);
       el.dataset.id = pin.id;
-      el.textContent = pin.number || '';
+      if (pin.number) {
+        const numEl = document.createElement('span');
+        numEl.className = 'pin-num';
+        numEl.style.fontFamily = pinNumberFont(pin); // number font applies to the NUMBER only — names/labels keep the normal font
+        numEl.textContent = pin.number;
+        el.appendChild(numEl);
+      }
       if (pendingMove) el.classList.add('pin-elevated'); // so its confirm buttons paint above neighboring pins/ball
 
       if (pin.flowActive) {
@@ -6224,7 +6255,7 @@
   const TALENT_EFFECT_NOTES = {
     'Sniper Eyes': 'Your next pass cannot be intercepted. Consumed the moment that pass is made, then a 3-chunk cooldown.',
     'Assassin Eyes': 'Click the field to drop a zone (same reach as your Dash) for 3 chunks, then a 3-chunk cooldown. Enemies inside take -3 to all stats against you. While you’re inside it, Intercept/Block/Tackle/Slide Tackle work within 1.5x a pin’s width of the ball carrier, ignoring each action’s normal range.',
-    'Predator Eyes': 'Your next shot attempt in Zone 2/3 skips the MTL (Shots) roll entirely — straight to ACC (Shot), no debuff risk. Consumed on that shot, then a 3-chunk cooldown.',
+    'Predator Eyes': 'Your next shot attempt in Zone 2 skips the MTL (Shots) roll entirely — straight to ACC (Shot), no debuff risk. Doesn’t apply in Zone 3, which still needs its own MTL roll. Consumed on that Zone 2 shot, then a 3-chunk cooldown.',
     'Meta-Vision': 'While active: an Acceleration (SPD) roll of 11+ gets an extra +0.3x move radius, and your Intercept/Block/Tackle/Slide Tackle range is widened by 0.2x. 3 chunks active, then a 3-chunk cooldown.',
     'Destroyer Eyes': 'Unlocks the first time you hit any one of the counters below. Once active (3 chunks, then a 5-chunk cooldown): anyone challenging you takes -5 to all stats against you, and anyone who fails to win the ball off you has a 50/50 chance of being charged 2 actions instead of 1.'
   };
@@ -6301,7 +6332,7 @@
       }
     } else if (talentName === 'Predator Eyes') {
       if (pin.predatorReady) {
-        addStatusLine(wrap, 'Armed — next shot in Zone 2/3 skips MTL (Shots)');
+        addStatusLine(wrap, 'Armed — next shot in Zone 2 skips MTL (Shots)');
       } else if (pin.predatorCooldownChunks > 0) {
         addStatusLine(wrap, 'Cooldown — ' + pin.predatorCooldownChunks + ' chunk' + (pin.predatorCooldownChunks === 1 ? '' : 's') + ' left');
       } else {
@@ -6734,9 +6765,10 @@
     // MTL (Shots): only relevant in Zone 2/3 (not needed in the box, not usable out of range)
     const zone = getShotZone(pin);
     const shotsRelevant = zone.zone === 'zone2' || zone.zone === 'zone3';
-    d20Buttons.mtl_shots.disabled = !shotsRelevant || pin.predatorReady;
-    d20Buttons.mtl_shots.classList.toggle('locked', !shotsRelevant || pin.predatorReady);
-    d20Notes.mtl_shots.textContent = pin.predatorReady
+    const predatorSkipsThis = pin.predatorReady && zone.zone === 'zone2'; // Predator Eyes only unlocks Zone 2 now \u2014 Zone 3 still needs this roll for real
+    d20Buttons.mtl_shots.disabled = !shotsRelevant || predatorSkipsThis;
+    d20Buttons.mtl_shots.classList.toggle('locked', !shotsRelevant || predatorSkipsThis);
+    d20Notes.mtl_shots.textContent = predatorSkipsThis
       ? 'Not needed \u2014 Predator Eye has this shot unlocked'
       : !shotsRelevant
         ? (zone.zone === 'box' ? 'Not needed \u2014 you\u2019re in the box' : 'Only used in Zone 2 / Zone 3')
@@ -6860,8 +6892,11 @@
       const total = roll + buff + access.debuff;
       pin.diceResult = { label: isVolley ? 'ACC (Volley)' : 'ACC (Shot)', roll, buff: buff + access.debuff, total, boosted: access.debuff === 0 };
       pin.mtlShotsResult = null; // consumed — next shot attempt needs a fresh MTL(Shots) roll if still in Zone 2/3
-      // Predator Eyes — consumed the moment a shot is actually taken in Zone 2/3
-      if (pin.predatorReady && (access.zone === 'zone2' || access.zone === 'zone3')) {
+      // Predator Eyes — Zone 2 only now (Zone 3 still needs a real MTL roll,
+      // see getShootingAccess), so it's only consumed by a Zone 2 shot. A
+      // Zone 3 shot taken while it's active doesn't touch it at all — it
+      // wasn't the thing that let that shot happen, so it shouldn't burn it.
+      if (pin.predatorReady && access.zone === 'zone2') {
         pin.predatorReady = false;
         pin.predatorCooldownChunks = 3;
       }
@@ -7452,8 +7487,8 @@
         if (!challenger.ballCarrier) {
           failReason = 'You need the ball to try dribbling past someone';
         } else {
-          valid = fieldDistancePx(challenger.x, challenger.y, target.x, target.y) <= pinPx * 1;
-          failReason = 'Too far \u2014 need to be touching the defender';
+          valid = fieldDistancePx(challenger.x, challenger.y, target.x, target.y) <= pinPx * 1.5; // 1x = touching; 1.5x = up to half a pin of gap
+          failReason = 'Too far \u2014 get within half a pin of the defender';
         }
       }
     }
@@ -9400,7 +9435,7 @@
       <ul>
         <li><strong>The box</strong> — no roll needed, straight to ACC (Shot).</li>
         <li><strong>Zone 2</strong> — needs <span class="tutorial-number">MTL 10+</span> on the MTL (Shots) roll before you're allowed to shoot at all.</li>
-        <li><strong>Zone 3</strong> — needs <span class="tutorial-number">MTL 15+</span>, same idea, just further out.</li>
+        <li><strong>Zone 3</strong> — needs <span class="tutorial-number">MTL 18+</span>, same idea, just further out.</li>
       </ul>
       <p>Pass the MTL check (or you're in the box), then ACC (Shot) determines whether it actually goes in — that part's judged narratively by whoever's GMing, same as any other roll.</p>
     `},
@@ -9410,7 +9445,7 @@
       <ul>
         <li><strong>Sniper Eyes</strong> — Activate, and your next pass is guaranteed un-interceptable. Consumed the moment that pass is made, then a <span class="tutorial-number">3-chunk cooldown</span>.</li>
         <li><strong>Assassin Eyes</strong> — Click the field to drop a zone (same reach as your Dash) for <span class="tutorial-number">3 chunks</span>, then a <span class="tutorial-number">3-chunk cooldown</span>. Enemies inside take -3 to all stats against you. While you're inside it, Intercept/Block/Tackle/Slide Tackle work within 1.5x a pin's width of the ball carrier instead of each action's normal range.</li>
-        <li><strong>Predator Eyes</strong> — Activate, and your next shot attempt in Zone 2/3 skips the MTL (Shots) roll entirely — straight to ACC (Shot), no debuff risk. Consumed on that shot, then a <span class="tutorial-number">3-chunk cooldown</span>.</li>
+        <li><strong>Predator Eyes</strong> — Activate, and your next shot attempt in Zone 2 skips the MTL (Shots) roll entirely — straight to ACC (Shot), no debuff risk. Doesn't apply in Zone 3, which still needs its own MTL roll. Consumed on that Zone 2 shot, then a <span class="tutorial-number">3-chunk cooldown</span>.</li>
         <li><strong>Meta-Vision</strong> — Active for <span class="tutorial-number">3 chunks</span>, then a <span class="tutorial-number">3-chunk cooldown</span>. While active: an Acceleration (SPD) roll of 11+ gets an extra +0.3x move radius, and your Intercept/Block/Tackle/Slide Tackle range is widened by 0.2x.</li>
         <li><strong>Destroyer Eyes</strong> — Unlocks the first time you hit any one of: 5 lost defensive challenges, 5 failed dribble-past attempts, 8 SPD rolls of 1-10, or 2 natural 1s on any roll. Once active (<span class="tutorial-number">3 chunks</span>, then a <span class="tutorial-number">5-chunk cooldown</span>): anyone challenging you takes -5 to all stats against you, and anyone who fails to win the ball off you has a 50/50 chance of being charged 2 actions instead of 1.</li>
       </ul>
@@ -11264,19 +11299,21 @@
       // separate key now (see saveSetupStateIfChanged) so that this save,
       // which fires on nearly every pin move, stays small and fast instead
       // of re-uploading every saved roster/board-save on every single move.
+      // activityLog/diceRollLog/chunkSnapshots live in their own separate key
+      // too now (see saveLogsStateIfChanged) — they only grow and change on
+      // discrete events (a roll, a goal, a chunk advance), not on every pin
+      // drag, so re-sending them on every single move wasted a lot of bytes
+      // for data that wasn't actually changing most of the time.
       const state = {
         version,
         pins, idSeq, spawnIndex, deletedPinIds,
         ball, shots, shotIdSeq, deletedShotIds,
         hasStartedPlay, maxChunkReached, maxChunkResetAt, stadiumLook,
-        chunkSnapshots,
         chunkValue: chunkValue.value, chunkValueUpdatedAt,
         scoreA: scoreA.value, scoreB: scoreB.value,
         teamAName: teamAName.value, teamBName: teamBName.value,
         greyZoneColor: document.getElementById('greyZoneColor').value,
         matchSim,
-        activityLog,
-        diceRollLog,
         pendingChallengeResponse, pendingChallengeResponseUpdatedAt,
         pendingDribbleOutcome, pendingDribbleOutcomeUpdatedAt
       };
@@ -11395,6 +11432,48 @@
       persistTeamsAndRostersLocally();
     } catch (err) {
       console.error('Setup data save failed:', err);
+    }
+  }
+
+  // ---- Activity/dice logs + chunk snapshots ----
+  // Same reasoning and same pattern as the setup key above: this data only
+  // changes on discrete events (a dice roll, an activity-log entry, a chunk
+  // snapshot save), not on every pin drag, so it gets its own key and the
+  // write is skipped entirely when nothing in it has actually changed.
+  // applyLoadedState() already applies activityLog/diceRollLog/chunkSnapshots
+  // as a blind overwrite (same as it always has — no merge logic changes
+  // here), so handing it this partial state object is exactly as safe as
+  // handing it the old setup-only or full-state objects it already receives
+  // elsewhere.
+  function logsKey(){ return STORAGE_KEY + '_logs'; }
+  let lastSavedLogsPayload = '';
+
+  // LOCKED — see the master sync-system lock banner at the top of the
+  // PeerJS script block. Do not modify without asking first.
+  function logsPayloadString(){
+    return JSON.stringify({ activityLog, diceRollLog, chunkSnapshots });
+  }
+
+  async function saveLogsStateIfChanged(){
+    if (!window.storage) return;
+    const payload = logsPayloadString();
+    if (payload === lastSavedLogsPayload) return; // nothing log-related changed locally — this is the whole point of splitting it out
+    try {
+      let lastErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await window.storage.set(logsKey(), payload, !!conferenceRoom);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < 2) await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
+      if (lastErr) throw lastErr;
+      lastSavedLogsPayload = payload;
+    } catch (err) {
+      console.error('Activity/dice log save failed:', err);
     }
   }
 
@@ -11521,6 +11600,14 @@
         restored = true;
       }
     } catch (err) { /* no saved setup state yet — that's fine, first run */ }
+    try {
+      const logsResult = await window.storage.get(logsKey(), !!conferenceRoom);
+      if (logsResult && logsResult.value) {
+        applyLoadedState(JSON.parse(logsResult.value));
+        lastSavedLogsPayload = logsResult.value; // we just loaded this — don't immediately re-save it as if it were a fresh local change
+        restored = true;
+      }
+    } catch (err) { /* no saved logs state yet — that's fine, first run */ }
     return restored;
   }
 
@@ -11551,6 +11638,7 @@
       justSaved = !!(await saveState({ silent: true }));
     }
     saveSetupStateIfChanged(); // no-op unless teams/saves/rosters actually changed since last time
+    saveLogsStateIfChanged(); // no-op unless activity/dice logs or chunk snapshots actually changed since last time
 
     if (conferenceRoom) {
       if (tickCount % 5 === 0) writePresenceHeartbeat();
@@ -11590,6 +11678,21 @@
         if (setupResult && setupResult.value && setupResult.value !== lastSavedSetupPayload) {
           applyLoadedState(JSON.parse(setupResult.value));
           lastSavedSetupPayload = setupResult.value;
+        }
+      } catch (err) {
+        // quietly ignore — we'll just try again in a few ticks
+      }
+    }
+
+    // Logs change more often than setup data (a roll or activity entry can
+    // happen fairly often) but still far less often than pin positions, so
+    // this gets its own, more frequent-than-setup but not-every-tick cadence.
+    if (tickCount % 3 === 2) {
+      try {
+        const logsResult = await window.storage.get(logsKey(), !!conferenceRoom);
+        if (logsResult && logsResult.value && logsResult.value !== lastSavedLogsPayload) {
+          applyLoadedState(JSON.parse(logsResult.value));
+          lastSavedLogsPayload = logsResult.value;
         }
       } catch (err) {
         // quietly ignore — we'll just try again in a few ticks
